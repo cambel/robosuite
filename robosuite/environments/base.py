@@ -4,6 +4,7 @@ from collections import OrderedDict
 from copy import deepcopy
 
 import numpy as np
+import mujoco
 
 import robosuite
 import robosuite.macros as macros
@@ -11,6 +12,7 @@ import robosuite.utils.sim_utils as SU
 from robosuite.renderers.base import load_renderer_config
 from robosuite.utils import OpenCVRenderer, SimulationError, XMLError
 from robosuite.utils.binding_utils import MjRenderContextOffscreen, MjSim
+from robosuite.utils.binding_utils import MjSimInteractive # simulator with interactive GUI
 
 REGISTERED_ENVS = {}
 
@@ -105,6 +107,12 @@ class MujocoEnv(metaclass=EnvMeta):
         renderer_config=None,
         seed=None,
     ):
+        self.use_interactive_viewer = True
+        
+        # If you're using an onscreen renderer, you must be also using an offscreen renderer!
+        if has_renderer and not has_offscreen_renderer:
+            has_offscreen_renderer = True
+
         # Rendering-specific attributes
         self.has_renderer = has_renderer
         # offscreen renderer needed for on-screen rendering
@@ -114,6 +122,10 @@ class MujocoEnv(metaclass=EnvMeta):
         self.render_visual_mesh = render_visual_mesh
         self.render_gpu_device_id = render_gpu_device_id
         self.viewer = None
+        
+        if self.use_interactive_viewer:
+            self.has_renderer = False
+            self.has_offscreen_renderer = False
 
         # Simulation-specific attributes
         self._observables = {}  # Maps observable names to observable objects
@@ -246,7 +258,10 @@ class MujocoEnv(metaclass=EnvMeta):
             xml = processor(xml)
 
         # Create the simulation instance
-        self.sim = MjSim.from_xml_string(xml)
+        if self.use_interactive_viewer:
+            self.sim = MjSimInteractive.from_xml_string(xml)            
+        else:
+            self.sim = MjSim.from_xml_string(xml)
 
         # run a single step to make sure changes have propagated through sim state
         self.sim.forward()
@@ -510,7 +525,8 @@ class MujocoEnv(metaclass=EnvMeta):
         """
         Renders to an on-screen window.
         """
-        self.viewer.render()
+        if not self.use_interactive_viewer:
+            self.viewer.render()
 
     def get_pixel_obs(self):
         """
@@ -721,6 +737,9 @@ class MujocoEnv(metaclass=EnvMeta):
         if self.viewer is not None:
             self.viewer.close()  # change this to viewer.finish()?
             self.viewer = None
+        if self.use_interactive_viewer:
+            # viewer belongs to sim object in the case of MjSimInteractive
+            self.sim.viewer.close()
 
     def _destroy_sim(self):
         """
