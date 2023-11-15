@@ -1175,3 +1175,17 @@ class MjSim:
         del self.model
         del self
         gc.collect()
+
+class MjSimInteractive(MjSim):
+    """
+    Modified version of MjSim that enables interactive visualization through mujoco.viewer
+    """
+    def __init__(self, model):
+        super().__init__(model)
+
+        import mujoco.viewer
+        self.viewer = mujoco.viewer.launch_passive(self.model._model, self.data._data)
+    
+    def step(self, with_udd=True):
+        super().step(with_udd=with_udd)
+        self.viewer.sync()
