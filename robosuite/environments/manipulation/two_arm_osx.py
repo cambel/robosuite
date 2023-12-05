@@ -1,5 +1,6 @@
 import numpy as np
 from robosuite.models.arenas.arena import Arena
+from robosuite.models.objects.composite.hammer import HammerObject
 from robosuite.utils.mjcf_utils import xml_path_completion
 
 import robosuite.utils.transform_utils as T
@@ -176,7 +177,7 @@ class TwoArmOSX(TwoArmEnv):
         # settings for table top
         self.table_full_size = table_full_size
         self.table_friction = table_friction
-        self.table_offset = np.array((0, 0, 0.8))
+        self.table_offset = np.array((0.0, 0.0, 0.8))
 
         # reward configuration
         self.reward_scale = reward_scale
@@ -260,18 +261,37 @@ class TwoArmOSX(TwoArmEnv):
         self.robots[1].robot_model.set_base_ori((0, 0, -np.pi))
         self.robots[1].init_qpos = np.array([1.57, -2.1, 1.4, -0.85, -1.57, 0])
 
-
         # load model for table top workspace
         mujoco_arena = Arena(xml_path_completion("arenas/osx_arena.xml"))
 
         # Arena always gets set to zero origin
         mujoco_arena.set_origin([0, 0, 0])
 
+        # initialize objects of interest
+        self.hammer = HammerObject(name="pot")
+
+        # Create placement initializer
+        if self.placement_initializer is not None:
+            self.placement_initializer.reset()
+            self.placement_initializer.add_objects(self.hammer)
+        else:
+            self.placement_initializer = UniformRandomSampler(
+                name="ObjectSampler",
+                mujoco_objects=self.hammer,
+                x_range=[-0.1, 0.1],
+                y_range=[-0.05, 0.05],
+                rotation=None,
+                rotation_axis="y",
+                ensure_object_boundary_in_range=False,
+                ensure_valid_placement=True,
+                reference_pos=self.table_offset,
+            )
+
         # task includes arena, robot, and objects of interest
         self.model = ManipulationTask(
             mujoco_arena=mujoco_arena,
             mujoco_robots=[robot.robot_model for robot in self.robots],
-            mujoco_objects=None,
+            mujoco_objects=self.hammer,
         )
 
     def _setup_references(self):
@@ -303,14 +323,14 @@ class TwoArmOSX(TwoArmEnv):
         super()._reset_internal()
 
         # Reset all object positions using initializer sampler if we're not directly loading from an xml
-        # if not self.deterministic_reset:
+        if not self.deterministic_reset:
 
             # Sample from the placement initializer for all objects
-            # object_placements = self.placement_initializer.sample()
+            object_placements = self.placement_initializer.sample()
 
-            # # Loop through all objects and reset their positions
-            # for obj_pos, obj_quat, obj in object_placements.values():
-            #     self.sim.data.set_joint_qpos(obj.joints[0], np.concatenate([np.array(obj_pos), np.array(obj_quat)]))
+            # Loop through all objects and reset their positions
+            for obj_pos, obj_quat, obj in object_placements.values():
+                self.sim.data.set_joint_qpos(obj.joints[0], np.concatenate([np.array(obj_pos), np.array(obj_quat)]))
 
     def visualize(self, vis_settings):
         """
