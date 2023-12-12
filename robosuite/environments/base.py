@@ -101,7 +101,7 @@ class MujocoEnv(metaclass=EnvMeta):
         renderer="mujoco",
         renderer_config=None,
     ):
-        self.use_interactive_viewer = True
+        self.use_interactive_viewer = False
         
         # If you're using an onscreen renderer, you must be also using an offscreen renderer!
         if has_renderer and not has_offscreen_renderer:
