@@ -67,23 +67,44 @@ AxisSpec = namedtuple("AxisSpec", ["direction", "range", "scale"])
 #     'BTN_START': 'reset',
 # }
 
+# GAMEPAD_SPEC = {
+#     'ABS_HAT0X': '',
+#     'ABS_HAT0Y': '',
+#     'ABS_X': AxisSpec(direction=1, range=[-1, 1], scale=1),
+#     'ABS_Y': AxisSpec(direction=2, range=[-1, 1], scale=-1),
+#     'ABS_RX': AxisSpec(direction=4, range=[-1, 1], scale=1),
+#     'ABS_RY': AxisSpec(direction=5, range=[-1, 1], scale=1),
+#     'ABS_Z': AxisSpec(direction=0, range=[-1, 0], scale=-1),
+#     'ABS_RZ': AxisSpec(direction=0, range=[0, 1], scale=1),
+#     'BTN_THUMBL': '',
+#     'BTN_THUMBR': '',
+#     'BTN_NORTH': '',
+#     'BTN_WEST': '',
+#     'BTN_SOUTH': 'gripper',
+#     'BTN_EAST': '',
+#     'BTN_TL': AxisSpec(direction=3, range=[-1, 0], scale=-1),
+#     'BTN_TR': AxisSpec(direction=3, range=[0, 1], scale=1),
+#     'BTN_SELECT': '',
+#     'BTN_START': 'reset',
+# }
+
 GAMEPAD_SPEC = {
-    'ABS_HAT0X': '',
-    'ABS_HAT0Y': '',
+    'ABS_HAT0X': AxisSpec(direction=4, range=[-1, 1], scale=1),
+    'ABS_HAT0Y': AxisSpec(direction=3, range=[-1, 1], scale=1),
     'ABS_X': AxisSpec(direction=1, range=[-1, 1], scale=1),
     'ABS_Y': AxisSpec(direction=2, range=[-1, 1], scale=-1),
-    'ABS_RX': AxisSpec(direction=4, range=[-1, 1], scale=1),
-    'ABS_RY': AxisSpec(direction=5, range=[-1, 1], scale=1),
-    'ABS_Z': AxisSpec(direction=0, range=[-1, 0], scale=-1),
-    'ABS_RZ': AxisSpec(direction=0, range=[0, 1], scale=1),
+    'ABS_RX': '',
+    'ABS_RY': AxisSpec(direction=0, range=[-1, 1], scale=1),
+    'ABS_Z': AxisSpec(direction=5, range=[-1, 0], scale=-1),
+    'ABS_RZ': AxisSpec(direction=5, range=[0, 1], scale=1),
     'BTN_THUMBL': '',
     'BTN_THUMBR': '',
-    'BTN_NORTH': '',
-    'BTN_WEST': '',
-    'BTN_SOUTH': 'gripper',
+    'BTN_NORTH': 'switch_robot',
+    'BTN_WEST': 'switch_camera',
+    'BTN_SOUTH': '',
     'BTN_EAST': '',
-    'BTN_TL': AxisSpec(direction=3, range=[-1, 0], scale=-1),
-    'BTN_TR': AxisSpec(direction=3, range=[0, 1], scale=1),
+    'BTN_TL': 'gripper',
+    'BTN_TR': 'gripper',
     'BTN_SELECT': '',
     'BTN_START': 'reset',
 }
@@ -157,6 +178,8 @@ class GamePad(Device):
 
         self._control = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         self._reset_state = 0
+        self._switch_camera = 0
+        self._switch_robot = 0
         self.rotation = np.array([[-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -1.0]])
         self._enabled = False
 
@@ -229,6 +252,8 @@ class GamePad(Device):
             raw_drotation=np.array([roll, pitch, yaw]),
             grasp=self.control_gripper,
             reset=self._reset_state,
+            switch_camera=self._switch_camera,
+            switch_robot=self._switch_robot,
         )
 
     def run(self):
@@ -249,6 +274,11 @@ class GamePad(Device):
                         self.control_gripper = float(event.state)
                     elif btn == 'reset':
                         self._reset_state = int(event.state)
+                    elif btn == 'switch_camera':
+                        self._switch_camera = int(event.state)
+                    elif btn == 'switch_robot':
+                        self._switch_robot = int(event.state)
+
 
     @property
     def control(self):
