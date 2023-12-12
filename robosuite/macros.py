@@ -38,6 +38,9 @@ MUJOCO_GPU_RENDERING = True
 SPACEMOUSE_VENDOR_ID = 9583
 SPACEMOUSE_PRODUCT_ID = 50734
 
+# Gamepad settings. used by GamePad class in robosuite/devices/gamepad.py
+GAMEPAD_NAME = "Logitech Gamepad F310"
+
 # If LOGGING LEVEL is set to None, the logger will be turned off
 CONSOLE_LOGGING_LEVEL = "INFO"
 # File logging is written to /tmp/robosuite_{time}_{pid}.log by default
