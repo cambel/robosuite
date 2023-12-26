@@ -77,6 +77,13 @@
       <geom size="0.01 0.16 0.04" pos="-0.064 -0.02 0.813" type="box" conaffinity="0" contype="0" group="1" name="base_fixture_4_visual" rgba="0.4 0.4 0.4 1"/>
       <geom size="0.1 0.01 0.04" pos="-0.174 -0.17 0.813" type="box" conaffinity="0" contype="0" group="1" name="base_fixture_5_visual" rgba="0.4 0.4 0.4 1"/>
       <geom size="0.1 0.01 0.04" pos="-0.174 0.13 0.813" type="box" conaffinity="0" contype="0" group="1" name="base_fixture_6_visual" rgba="0.4 0.4 0.4 1"/>
+      <geom size="0.12 0.16 0.0025" pos="-0.174 -0.02 0.8555" type="box" group="0" name="base_fixture_0_collision" rgba="0.9 0.9 0.9 1"/>
+      <geom size="0.01 0.11 0.01" pos="-0.064 0.03 0.863" type="box" group="0" name="base_fixture_1_collision" rgba="0.9 0.9 0.9 1"/>
+      <geom size="0.09 0.01 0.01" pos="-0.144 0.13 0.863" type="box" group="0" name="base_fixture_2_collision" rgba="0.9 0.9 0.9 1"/>
+      <geom size="0.01 0.16 0.04" pos="-0.284 -0.02 0.813" type="box" group="0" name="base_fixture_3_collision" rgba="0.4 0.4 0.4 1"/>
+      <geom size="0.01 0.16 0.04" pos="-0.064 -0.02 0.813" type="box" group="0" name="base_fixture_4_collision" rgba="0.4 0.4 0.4 1"/>
+      <geom size="0.1 0.01 0.04" pos="-0.174 -0.17 0.813" type="box" group="0" name="base_fixture_5_collision" rgba="0.4 0.4 0.4 1"/>
+      <geom size="0.1 0.01 0.04" pos="-0.174 0.13 0.813" type="box" group="0" name="base_fixture_6_collision" rgba="0.4 0.4 0.4 1"/>    
     </body>
 
     <light pos="1.0 1.0 1.5" dir="-0.2 -0.2 -1" specular="0.3 0.3 0.3" directional="true" castshadow="false"/>
