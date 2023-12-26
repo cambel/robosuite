@@ -177,7 +177,7 @@ class TwoArmOSX(TwoArmEnv):
         # settings for table top
         self.table_full_size = table_full_size
         self.table_friction = table_friction
-        self.table_offset = np.array((0.0, 0.0, 0.8))
+        self.table_offset = np.array((0.10, 0.0, 0.8))
 
         # reward configuration
         self.reward_scale = reward_scale
@@ -278,7 +278,7 @@ class TwoArmOSX(TwoArmEnv):
             self.placement_initializer = UniformRandomSampler(
                 name="ObjectSampler",
                 mujoco_objects=self.hammer,
-                x_range=[-0.1, 0.1],
+                x_range=[-0.05, 0.1],
                 y_range=[-0.05, 0.05],
                 rotation=None,
                 rotation_axis="y",
