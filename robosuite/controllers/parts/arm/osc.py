@@ -8,7 +8,7 @@ from robosuite.controllers.parts.controller import Controller
 from robosuite.utils.control_utils import *
 
 # Supported impedance modes
-IMPEDANCE_MODES = {"fixed", "variable", "variable_kp"}
+IMPEDANCE_MODES = {"fixed", "variable", "variable_kp", "variable_full_kp"}
 
 # TODO: Maybe better naming scheme to differentiate between input / output min / max and pos/ori limits, etc.
 
@@ -195,6 +195,10 @@ class OperationalSpaceController(Controller):
             self.control_dim += 12
         elif self.impedance_mode == "variable_kp":
             self.control_dim += 6
+        elif self.impedance_mode == "variable_full_kp":
+            self.control_dim += 18
+            self.kp_min = self.nums2array(kp_limits[0], 18)
+            self.kp_max = self.nums2array(kp_limits[1], 18)
 
         # limits
         self.position_limits = np.array(position_limits) if position_limits is not None else position_limits
@@ -247,6 +251,10 @@ class OperationalSpaceController(Controller):
             self.kd = 2 * np.sqrt(self.kp) * np.clip(damping_ratio, self.damping_ratio_min, self.damping_ratio_max)
         elif self.impedance_mode == "variable_kp":
             kp, delta = action[:6], action[6:]
+            self.kp = np.clip(kp, self.kp_min, self.kp_max)
+            self.kd = 2 * np.sqrt(self.kp)  # critically damped
+        elif self.impedance_mode == "variable_full_kp":
+            kp, delta = action[:18], action[18:]
             self.kp = np.clip(kp, self.kp_min, self.kp_max)
             self.kd = 2 * np.sqrt(self.kp)  # critically damped
         else:  # This is case "fixed"
@@ -445,8 +453,15 @@ class OperationalSpaceController(Controller):
         base_pos_vel = np.array(self.sim.data.get_site_xvelp(f"{self.naming_prefix}{self.part_name}_center"))
         vel_pos_error = -(self.ref_pos_vel - base_pos_vel)
 
+        if self.impedance_mode != "variable_full_kp":
+            position_kp = np.diag(self.kp[0:3])
+            orientation_kp = np.diag(self.kp[3:6])
+        else:
+            position_kp = np.array(self.kp[0:9]).reshape((3,3))
+            orientation_kp = np.array(self.kp[9:18]).reshape((3,3))
+
         # F_r = kp * pos_err + kd * vel_err
-        desired_force = np.multiply(np.array(position_error), np.array(self.kp[0:3])) + np.multiply(
+        desired_force = np.dot(position_error, position_kp) + np.multiply(
             vel_pos_error, self.kd[0:3]
         )
 
@@ -454,7 +469,7 @@ class OperationalSpaceController(Controller):
         vel_ori_error = -(self.ref_ori_vel - base_ori_vel)
 
         # Tau_r = kp * ori_err + kd * vel_err
-        desired_torque = np.multiply(np.array(ori_error), np.array(self.kp[3:6])) + np.multiply(
+        desired_torque = np.dot(ori_error, orientation_kp) + np.multiply(
             vel_ori_error, self.kd[3:6]
         )
 
@@ -555,6 +570,9 @@ class OperationalSpaceController(Controller):
             low = np.concatenate([self.damping_ratio_min, self.kp_min, self.input_min])
             high = np.concatenate([self.damping_ratio_max, self.kp_max, self.input_max])
         elif self.impedance_mode == "variable_kp":
+            low = np.concatenate([self.kp_min, self.input_min])
+            high = np.concatenate([self.kp_max, self.input_max])
+        elif self.impedance_mode == "variable_full_kp":
             low = np.concatenate([self.kp_min, self.input_min])
             high = np.concatenate([self.kp_max, self.input_max])
         else:  # This is case "fixed"
