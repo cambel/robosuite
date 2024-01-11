@@ -255,8 +255,6 @@ class OperationalSpaceController(Controller):
             self.kd = 2 * np.sqrt(self.kp)  # critically damped
         elif self.impedance_mode == "variable_full_kp":
             kp, delta = action[:18], action[18:]
-            # self.kp = np.clip(kp, self.kp_min, self.kp_max)
-            self.kd = 2 * np.sqrt(self.kp)  # critically damped
             self.kp = np.zeros_like(kp)
             # assume positive diagonal stiffness
             diag_indices = [0,4,8,9,13,17]
@@ -265,6 +263,7 @@ class OperationalSpaceController(Controller):
             other_indices = np.ones(len(kp), np.bool)
             other_indices[diag_indices] = False
             self.kp[other_indices] = np.sign(kp[other_indices]) * np.clip(np.abs(kp[other_indices]), 0, self.kp_max[other_indices])
+            # Compute damping (preserve sign)
             self.kd = 2 * np.sign(self.kp) * np.sqrt(np.abs(self.kp))  # critically damped
         else:  # This is case "fixed"
             delta = action
