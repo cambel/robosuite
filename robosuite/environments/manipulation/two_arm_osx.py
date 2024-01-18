@@ -278,9 +278,9 @@ class TwoArmOSX(TwoArmEnv):
             self.placement_initializer = UniformRandomSampler(
                 name="ObjectSampler",
                 mujoco_objects=self.hammer,
-                x_range=[-0.05, 0.1],
-                y_range=[-0.05, 0.05],
-                rotation=None,
+                x_range=[0, 0],
+                y_range=[0, 0],
+                rotation=0,
                 rotation_axis="y",
                 ensure_object_boundary_in_range=False,
                 ensure_valid_placement=True,
