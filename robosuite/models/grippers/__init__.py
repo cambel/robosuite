@@ -13,6 +13,7 @@ from .wiping_gripper import WipingGripper
 from .bd_gripper import BDGripper
 from .null_gripper import NullGripper
 from .inspire_hands import InspireLeftHand, InspireRightHand
+from .grinder import UR5eGrinder
 
 GRIPPER_MAPPING = {
     "RethinkGripper": RethinkGripper,
@@ -28,6 +29,7 @@ GRIPPER_MAPPING = {
     "InspireLeftHand": InspireLeftHand,
     "InspireRightHand": InspireRightHand,
     None: NullGripper,
+    "Grinder": UR5eGrinder,
 }
 
 ALL_GRIPPERS = GRIPPER_MAPPING.keys()

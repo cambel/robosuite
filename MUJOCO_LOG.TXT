@@ -1,0 +1,18 @@
+Tue Jan 30 01:56:47 2024
+WARNING: Nan, Inf or huge value in QACC at DOF 7. The simulation is unstable. Time = 0.2780.
+
+Wed Jan 31 06:31:16 2024
+WARNING: Nan, Inf or huge value in QACC at DOF 0. The simulation is unstable. Time = 0.0120.
+
+Wed Jan 31 07:14:18 2024
+WARNING: Nan, Inf or huge value in QPOS at DOF 7. The simulation is unstable. Time = 0.0000.
+
+Wed Jan 31 07:48:08 2024
+ERROR: gladLoadGL error
+
+Wed Jan 31 07:50:02 2024
+ERROR: gladLoadGL error
+
+Wed Jan 31 08:04:05 2024
+ERROR: gladLoadGL error
+
