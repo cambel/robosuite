@@ -41,7 +41,10 @@ class LemonObject(MujocoXMLObject):
 
     def __init__(self, name):
         super().__init__(
-            xml_path_completion("objects/lemon.xml"), name=name, obj_type="all", duplicate_collision_geoms=True
+            xml_path_completion("objects/lemon.xml"), 
+            name=name, 
+            obj_type="all", 
+            duplicate_collision_geoms=True
         )
 
 
@@ -297,3 +300,37 @@ class DoorObject(MujocoXMLObject):
         dic = super().important_sites
         dic.update({"handle": self.naming_prefix + "handle"})
         return dic
+
+
+class MortarObject(MujocoXMLObject):
+    """
+    Mortar object (used for grinding safety controller)     
+    TODO maybe add friction and damping functions 
+    """
+
+    def __init__(self, name):
+        super().__init__(
+            xml_path_completion("objects/mortar.xml"),
+            name=name,
+            joints=[dict(type="free", damping="0.005")],
+            obj_type="all",
+            duplicate_collision_geoms=True,
+        )
+        
+class MortarVisualObject(MujocoXMLObject):
+    """
+    Visual fiducial of mortar (used for grinding afety controller)
+
+    Fiducial objects are not involved in collision physics.
+    They provide a point of reference to indicate a position.
+    """
+
+    def __init__(self, name):
+        super().__init__(
+            xml_path_completion("objects/mortar-visual.xml"),
+            name=name,
+            joints=None,
+            obj_type="visual",
+            duplicate_collision_geoms=True,
+        )
+
