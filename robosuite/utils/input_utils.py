@@ -258,7 +258,7 @@ def input2action(device, robot, active_arm="right", env_configuration=None, cont
         goal_ori = T.quat2axisangle(T.mat2quat(goal_ori))
         goal_pos = set_goal_position(action[:3]*0.1, robot.controller.ee_pos, position_limit=robot.controller.position_limits)
 
-        action = np.concatenate([goal_pos, goal_ori])
+        action = np.concatenate([goal_pos, goal_ori, [grasp] * gripper_dof])
 
     # Return the action and grasp
     return action, grasp
