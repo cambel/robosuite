@@ -5,6 +5,7 @@ Utility functions for grabbing user inputs
 import numpy as np
 
 import robosuite as suite
+from robosuite.utils.control_utils import set_goal_orientation, set_goal_position
 import robosuite.utils.transform_utils as T
 from robosuite.devices import *
 from robosuite.models.robots import *
@@ -145,7 +146,7 @@ def choose_robots(exclude_bimanual=False, use_humanoids=False):
     return list(robots)[k]
 
 
-def input2action(device, robot, active_arm="right", env_configuration=None, controller_config=None, obs=None):
+def input2action(device, robot, active_arm="right", env_configuration=None, controller_config=None):
     """
     Converts an input from an active device into a valid action sequence that can be fed into an env.step() call
 
@@ -248,16 +249,12 @@ def input2action(device, robot, active_arm="right", env_configuration=None, cont
         action = np.concatenate([dpos, drotation, [grasp] * gripper_dof])
 
     if not controller_config['control_delta']:
-        current_pos = obs['robot0_eef_pos'] if active_arm == 'right' else obs['robot1_eef_pos']
-        current_quat = obs['robot0_eef_quat'] if active_arm == 'right' else obs['robot1_eef_quat']
+        robot.controller.update()
+        goal_ori = set_goal_orientation(action[3:6]*0.5, robot.controller.ee_ori_mat, orientation_limit=robot.controller.orientation_limits)
+        goal_ori = T.quat2axisangle(T.mat2quat(goal_ori))
+        goal_pos = set_goal_position(action[:3]*0.1, robot.controller.ee_pos, position_limit=robot.controller.position_limits)
 
-        diff_pos = action[:3] * 0.1  # hardcode
-        diff_quat = T.axisangle2quat(action[3:6])
-
-        next_pos = current_pos + diff_pos
-        next_quat = T.quat_multiply(diff_quat, current_quat)
-
-        action = np.concatenate([next_pos, T.quat2axisangle(next_quat)])
+        action = np.concatenate([goal_pos, goal_ori])
 
     # Return the action and grasp
     return action, grasp
