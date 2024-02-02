@@ -149,7 +149,7 @@ def choose_robots(exclude_bimanual=False):
     return list(robots)[k]
 
 
-def input2action(device, robot, active_arm="right", env_configuration=None):
+def input2action(device, robot, active_arm="right", env_configuration=None, controller_config=None, obs=None):
     """
     Converts an input from an active device into a valid action sequence that can be fed into an env.step() call
 
@@ -250,6 +250,18 @@ def input2action(device, robot, active_arm="right", env_configuration=None):
         action = np.concatenate([dpos, [grasp] * gripper_dof])
     else:
         action = np.concatenate([dpos, drotation, [grasp] * gripper_dof])
+
+    if not controller_config['control_delta']:
+        current_pos = obs['robot0_eef_pos'] if active_arm == 'right' else obs['robot1_eef_pos']
+        current_quat = obs['robot0_eef_quat'] if active_arm == 'right' else obs['robot1_eef_quat']
+
+        diff_pos = action[:3] * 0.1  # hardcode
+        diff_quat = T.axisangle2quat(action[3:6])
+
+        next_pos = current_pos + diff_pos
+        next_quat = T.quat_multiply(diff_quat, current_quat)
+
+        action = np.concatenate([next_pos, T.quat2axisangle(next_quat)])
 
     # Return the action and grasp
     return action, grasp
