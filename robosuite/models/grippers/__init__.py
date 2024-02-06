@@ -30,6 +30,7 @@ GRIPPER_MAPPING = {
     "InspireRightHand": InspireRightHand,
     None: NullGripper,
     "Grinder": UR5eGrinder,
+    None: NullGripper,
 }
 
 ALL_GRIPPERS = GRIPPER_MAPPING.keys()
