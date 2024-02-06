@@ -24,8 +24,8 @@ GRIPPER_MAPPING = {
     "Robotiq140Gripper": Robotiq140Gripper,
     "RobotiqThreeFingerGripper": RobotiqThreeFingerGripper,
     "RobotiqThreeFingerDexterousGripper": RobotiqThreeFingerDexterousGripper,
-    None: NullGripper,
     "Grinder": UR5eGrinder,
+    None: NullGripper,
 }
 
 ALL_GRIPPERS = GRIPPER_MAPPING.keys()
