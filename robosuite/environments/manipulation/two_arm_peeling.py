@@ -261,7 +261,9 @@ class TwoArmPeeling(TwoArmEnv):
         # b_bot
         self.robots[1].robot_model.set_base_xpos((0.003,  0.525, 0.750))
         self.robots[1].robot_model.set_base_ori((0, 0, -np.pi))
-        self.robots[1].init_qpos = np.array([1.57, -2.1, 1.4, -0.85, -1.57, 0])
+        # self.robots[1].init_qpos = np.array([1.57, -2.1, 1.4, -0.85, -1.57, 0])
+        # near the table
+        self.robots[1].init_qpos = np.array([0.673, -1.907, 1.322, -0.972, -1.587, -0.897])
 
         # load model for table top workspace
         mujoco_arena = Arena(xml_path_completion("arenas/osx_arena.xml"))
