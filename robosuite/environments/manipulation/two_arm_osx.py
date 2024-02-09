@@ -304,7 +304,7 @@ class TwoArmOSX(TwoArmEnv):
 
         # Additional object references from this env
         self.table_top_id = self.sim.model.site_name2id("table_top")
-        
+
     def _setup_observables(self):
         """
         Sets up observables to be used for this environment. Creates object-based observables if enabled

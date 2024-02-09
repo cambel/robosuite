@@ -13,7 +13,7 @@ from robosuite.environments.manipulation.two_arm_peg_in_hole import TwoArmPegInH
 from robosuite.environments.manipulation.two_arm_handover import TwoArmHandover
 from robosuite.environments.manipulation.two_arm_transport import TwoArmTransport
 from robosuite.environments.manipulation.two_arm_osx import TwoArmOSX
-from robosuite.environments.manipulation.two_arm_peeling import TwoArmPeeling
+from robosuite.environments.manipulation.two_arm_wiping import TwoArmWiping
 
 from robosuite.environments import ALL_ENVIRONMENTS
 from robosuite.controllers import (
