@@ -1,9 +1,7 @@
 import multiprocessing
 import numpy as np
-from robosuite.models.arenas.arena import Arena
 from robosuite.models.arenas.osx_wipe_arena import OSXWipeArena
 from robosuite.models.objects.composite.hammer import HammerObject
-from robosuite.models.objects.composite.hollow_cylinder import HollowCylinderObject
 from robosuite.utils.mjcf_utils import xml_path_completion
 
 import robosuite.utils.transform_utils as T
@@ -213,6 +211,11 @@ class TwoArmWiping(TwoArmEnv):
         renderer_config=None,
     ):
 
+        # settings for table top
+        self.table_full_size = table_full_size
+        self.table_friction = table_friction
+        self.table_offset = np.array((0.10, 0.0, 0.8))
+
         # Get config
         self.task_config = DEFAULT_WIPE_CONFIG
 
@@ -277,6 +280,8 @@ class TwoArmWiping(TwoArmEnv):
 
         # object placement initializer
         self.placement_initializer = placement_initializer
+
+        self.mujoco_objects = []
 
         super().__init__(
             robots=['UR5e', 'UR5e'],
@@ -515,7 +520,6 @@ class TwoArmWiping(TwoArmEnv):
         self.robot_contact_geoms = self.robots[1].robot_model.contact_geoms
 
         # load model for table top workspace
-        # mujoco_arena = Arena(xml_path_completion("arenas/osx_arena.xml"))
         mujoco_arena = OSXWipeArena(
             xml=xml_path_completion("arenas/osx_arena.xml")
         )
@@ -524,34 +528,34 @@ class TwoArmWiping(TwoArmEnv):
         mujoco_arena.set_origin([0, 0, 0])
 
         # initialize objects of interest
-        # self.hammer = HammerObject(name="pot")
-        # self.peeler = HollowCylinderObject(name="peeler")
+        self.hammer = HammerObject(name="hammer")
+        self.mujoco_objects.append(self.hammer)
 
         # Create placement initializer
-        # if self.placement_initializer is not None:
-        #     self.placement_initializer.reset()
-        #     self.placement_initializer.add_objects([self.hammer, self.peeler])
-        # else:
-        #     self.placement_initializer = UniformRandomSampler(
-        #         name="ObjectSampler",
-        #         # mujoco_objects=[self.hammer, self.peeler],
-        #         # x_range=[0, 0],
-        #         # y_range=[0, 0],
-        #         # rotation=0,
-        #         x_range=[-0.1, 0.1],
-        #         y_range=[-0.1, 0.1],
-        #         # rotation=None,
-        #         rotation_axis="y",
-        #         ensure_object_boundary_in_range=False,
-        #         ensure_valid_placement=True,
-        #         reference_pos=self.table_offset,
-        #     )
+        if self.placement_initializer is not None:
+            self.placement_initializer.reset()
+            self.placement_initializer.add_objects(self.mujoco_objects)
+        else:
+            self.placement_initializer = UniformRandomSampler(
+                name="ObjectSampler",
+                mujoco_objects=self.hammer,
+                x_range=[0, 0],
+                y_range=[0, 0],
+                rotation=0,
+                # x_range=[-0.1, 0.1],
+                # y_range=[-0.1, 0.1],
+                # rotation=None,
+                rotation_axis="y",
+                ensure_object_boundary_in_range=False,
+                ensure_valid_placement=True,
+                reference_pos=self.table_offset,
+            )
 
         # task includes arena, robot, and objects of interest
         self.model = ManipulationTask(
             mujoco_arena=mujoco_arena,
             mujoco_robots=[robot.robot_model for robot in self.robots],
-            # mujoco_objects=[self.hammer],
+            # mujoco_objects=self.mujoco_objects,
         )
 
     def _setup_references(self):
