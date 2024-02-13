@@ -17,7 +17,7 @@ class OSXWipeArena(Arena):
             fixture_offset=(0, 0, 0.858),
             num_markers=10,
             line_width=0.03,
-            coverage_factor=0.9,
+            coverage_factor=0.7,
             two_clusters=False,
             xml="arenas/osx_arena.xml"
     ):
@@ -132,18 +132,17 @@ class OSXWipeArena(Arena):
         if np.random.uniform(0, 1) > 0.7:
             self.direction += np.random.normal(0, 0.5)
 
-        posnew0 = pos[0] + 0.005 * np.sin(self.direction)
-        posnew1 = pos[1] + 0.005 * np.cos(self.direction)
-
-        # TODO: Ensure the new pos is within the table range
-        # We keep resampling until we get a valid new position that's on the table
-        # while (
-        #     abs(posnew0) >= self.fixture_half_size[0] * self.coverage_factor - self.line_width / 2
-        #     or abs(posnew1) >= self.fixture_half_size[1] * self.coverage_factor - self.line_width / 2
-        # ):
-        self.direction += np.random.normal(0, 0.5)
         posnew0 = pos[0] + 0.01 * np.sin(self.direction)
         posnew1 = pos[1] + 0.01 * np.cos(self.direction)
+
+        # We keep resampling until we get a valid new position that's on the table
+        while (not (
+            -0.174 - self.fixture_full_size[0] * self.coverage_factor + self.line_width / 2 <= posnew0 <= -0.174 + self.fixture_full_size[0] * self.coverage_factor - self.line_width / 2
+            and -0.02 - self.fixture_full_size[1] * self.coverage_factor + self.line_width / 2 <= posnew1 <= -0.02 + self.fixture_full_size[1] * self.coverage_factor - self.line_width / 2)
+        ):
+            self.direction += np.random.normal(0, 0.5)
+            posnew0 = pos[0] + 0.01 * np.sin(self.direction)
+            posnew1 = pos[1] + 0.01 * np.cos(self.direction)
 
         # Return this newly sampled position
         return np.array((posnew0, posnew1))
