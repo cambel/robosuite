@@ -99,10 +99,10 @@ GAMEPAD_SPEC = {
     'ABS_RZ': AxisSpec(direction=5, range=[0, 1], scale=1),
     'BTN_THUMBL': '',
     'BTN_THUMBR': '',
-    'BTN_NORTH': 'switch_robot',
-    'BTN_WEST': 'switch_camera',
-    'BTN_SOUTH': '',
-    'BTN_EAST': '',
+    'BTN_NORTH': 'X',
+    'BTN_WEST': 'Y',
+    'BTN_SOUTH': 'A',
+    'BTN_EAST': 'B',
     'BTN_TL': 'gripper',
     'BTN_TR': 'gripper',
     'BTN_SELECT': '',
@@ -178,8 +178,7 @@ class GamePad(Device):
 
         self._control = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         self._reset_state = 0
-        self._switch_camera = 0
-        self._switch_robot = 0
+        self._btn_state = [0, 0, 0, 0] # state of X, Y, A, B buttons
         self.rotation = np.array([[-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -1.0]])
         self._enabled = False
 
@@ -252,8 +251,7 @@ class GamePad(Device):
             raw_drotation=np.array([roll, pitch, yaw]),
             grasp=self.control_gripper,
             reset=self._reset_state,
-            switch_camera=self._switch_camera,
-            switch_robot=self._switch_robot,
+            buttons_state=self._btn_state,
         )
 
     def run(self):
@@ -274,10 +272,14 @@ class GamePad(Device):
                         self.control_gripper = float(event.state)
                     elif btn == 'reset':
                         self._reset_state = int(event.state)
-                    elif btn == 'switch_camera':
-                        self._switch_camera = int(event.state)
-                    elif btn == 'switch_robot':
-                        self._switch_robot = int(event.state)
+                    elif btn == 'X':
+                        self._btn_state[0] = int(event.state)
+                    elif btn == 'Y':
+                        self._btn_state[1] = int(event.state)
+                    elif btn == 'A':
+                        self._btn_state[2] = int(event.state)
+                    elif btn == 'B':
+                        self._btn_state[3] = int(event.state)
 
 
     @property
