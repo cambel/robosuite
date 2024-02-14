@@ -319,7 +319,7 @@ class MortarObject(MujocoXMLObject):
         
 class MortarVisualObject(MujocoXMLObject):
     """
-    Visual fiducial of mortar (used for grinding afety controller)
+    Visual fiducial of mortar (used for grinding safety controller)
 
     Fiducial objects are not involved in collision physics.
     They provide a point of reference to indicate a position.

@@ -4,7 +4,7 @@ import numpy as np
 
 from robosuite.environments.manipulation.single_arm_env import SingleArmEnv
 from robosuite.models.arenas import TableArena
-from robosuite.models.objects import MortarObject
+from robosuite.models.objects import MortarObject, MortarVisualObject
 from robosuite.models.tasks import ManipulationTask
 from robosuite.utils.mjcf_utils import CustomMaterial
 from robosuite.utils.observables import Observable, sensor
@@ -278,9 +278,12 @@ class Grind(SingleArmEnv):
         mujoco_arena.set_origin([0, 0, 0])
 
         # initialize objects of interest
-
         self.mortar = MortarObject(
             name="mortar",
+        )
+
+        self.visual_mortar = MortarVisualObject(
+            name="mortar_visual",
         )
 
         # Create placement initializer
