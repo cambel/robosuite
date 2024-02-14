@@ -1,18 +1,105 @@
+<?xml version='1.0' encoding='utf-8'?>
 <mujoco model="mortar">
   <asset>
-    <mesh file="meshes/mortar.stl" name="mortar_mesh" scale="1 1 1"/>
-    <texture file="../textures/brass-ambra.png" type="2d" name="tex-brass-ambra" />
-    <material name="mortar" reflectance="0.7" texrepeat="15 15" texture="tex-brass-ambra" texuniform="true"/>
+    <mesh file="meshes/mortar_parts/Mortar_part_10.stl" name="mortar_mesh10" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_24.stl" name="mortar_mesh24" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_01.stl" name="mortar_mesh01" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_16.stl" name="mortar_mesh16" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_36.stl" name="mortar_mesh36" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_33.stl" name="mortar_mesh33" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_02.stl" name="mortar_mesh02" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_26.stl" name="mortar_mesh26" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_41.stl" name="mortar_mesh41" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_38.stl" name="mortar_mesh38" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_22.stl" name="mortar_mesh22" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_15.stl" name="mortar_mesh15" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_42.stl" name="mortar_mesh42" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_08.stl" name="mortar_mesh08" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_39.stl" name="mortar_mesh39" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_13.stl" name="mortar_mesh13" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_23.stl" name="mortar_mesh23" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_21.stl" name="mortar_mesh21" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_31.stl" name="mortar_mesh31" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_29.stl" name="mortar_mesh29" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_30.stl" name="mortar_mesh30" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_27.stl" name="mortar_mesh27" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_44.stl" name="mortar_mesh44" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_07.stl" name="mortar_mesh07" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_03.stl" name="mortar_mesh03" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_43.stl" name="mortar_mesh43" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_09.stl" name="mortar_mesh09" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_11.stl" name="mortar_mesh11" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_14.stl" name="mortar_mesh14" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_28.stl" name="mortar_mesh28" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_37.stl" name="mortar_mesh37" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_40.stl" name="mortar_mesh40" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_06.stl" name="mortar_mesh06" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_25.stl" name="mortar_mesh25" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_04.stl" name="mortar_mesh04" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_32.stl" name="mortar_mesh32" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_35.stl" name="mortar_mesh35" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_20.stl" name="mortar_mesh20" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_17.stl" name="mortar_mesh17" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_34.stl" name="mortar_mesh34" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_12.stl" name="mortar_mesh12" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_19.stl" name="mortar_mesh19" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_05.stl" name="mortar_mesh05" scale="1 1 1" />
+    <mesh file="meshes/mortar_parts/Mortar_part_18.stl" name="mortar_mesh18" scale="1 1 1" />
+    <texture file="../textures/brass-ambra.png" name="tex-brass-ambra" type="2d" />
+    <material name="mortar" reflectance="0.7" texrepeat="15 15" texture="tex-brass-ambra" texuniform="true" />
   </asset>
   <worldbody>
     <body>
       <body name="object">
-      <!--TODO check geometry-->
-        <geom pos="0 0 0" mesh="mortar_mesh" type="mesh" solimp="0.998 0.998 0.001" solref="0.001 1" density="50" friction="0.95 0.3 0.1"  material="mortar" group="0" condim="4" mass="1000"/>
+        <geom pos="0 0 0" mesh="mortar_mesh10" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh24" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh01" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh16" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh36" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh33" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh02" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh26" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh41" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh38" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh22" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh15" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh42" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh08" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh39" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh13" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh23" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh21" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh31" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh29" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh30" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh27" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh44" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh07" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh03" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh43" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh09" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh11" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh14" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh28" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh37" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh40" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh06" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh25" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh04" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh32" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh35" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh20" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh17" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh34" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh12" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh19" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh05" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
+        <geom pos="0 0 0" mesh="mortar_mesh18" type="mesh" solimp="0.998 0.998 0.001" solref="0.0011" density="50" friction="0.95 0.3 0.1" material="mortar" group="0" condim="4" mass="1000" />
       </body>
-      <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.045" name="bottom_site"/>
-      <site rgba="0 0 0 0" size="0.005" pos="0 0 0.03" name="top_site"/>
-      <site rgba="0 0 0 0" size="0.005" pos="0.03 0.03 0" name="horizontal_radius_site"/>
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.045" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 0.03" name="top_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.03 0.03 0" name="horizontal_radius_site" />
     </body>
   </worldbody>
 </mujoco>
+
