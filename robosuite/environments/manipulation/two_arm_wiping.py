@@ -419,7 +419,7 @@ class TwoArmWiping(TwoArmEnv):
                             # Check if marker is within the tool center:
                             if PointInRectangle(pp[0], pp[1], pp[2], pp[3], pp_2):
                                 active_markers.append(marker)
-                                print('active_markers', active_markers)
+                                # print('active_markers', active_markers)
 
             # Obtain the list of currently active (wiped) markers that where not wiped before
             # These are the markers we are wiping at this step
@@ -521,6 +521,7 @@ class TwoArmWiping(TwoArmEnv):
 
         # load model for table top workspace
         mujoco_arena = OSXWipeArena(
+            fixture_full_size=(0.12, 0.16, 0.05),
             xml=xml_path_completion("arenas/osx_arena.xml")
         )
 
