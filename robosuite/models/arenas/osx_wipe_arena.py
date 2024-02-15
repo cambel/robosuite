@@ -19,17 +19,18 @@ class OSXWipeArena(Arena):
             line_width=0.03,
             coverage_factor=0.7,
             two_clusters=False,
+            seed=0,
             xml="arenas/osx_arena.xml"
     ):
         super().__init__(xml_path_completion(xml))
-
+        self.rng = np.random.default_rng(seed)
         self.fixture_full_size = np.array(fixture_full_size)
         self.fixture_half_size = self.fixture_full_size / 2
         self.fixture_friction = fixture_friction
         self.fixture_offset = fixture_offset
         # self.center_pos = self.bottom_pos + np.array([0, 0, -self.fixture_half_size[2]]) + self.fixture_offset
         # print('center_pos', self.center_pos)
-        self.center_pos = np.array([-0.174, -0.02, 0.8555])
+        self.center_pos = np.array([-0.174, -0.04, 0.8555])
 
         self.num_markers = num_markers
         self.line_width = line_width
@@ -102,15 +103,15 @@ class OSXWipeArena(Arena):
             np.array: the (x,y) value of the newly sampled dirt starting location
         """
         # First define the random direction that we will start at
-        self.direction = np.random.uniform(-np.pi, np.pi)
+        self.direction = self.rng.uniform(-np.pi, np.pi)
 
         return np.array(
             (
-                np.random.uniform(
+                self.rng.uniform(
                     (self.center_pos[0] - self.fixture_half_size[0]) * self.coverage_factor + self.line_width / 2,
                     (self.center_pos[0] + self.fixture_half_size[0]) * self.coverage_factor - self.line_width / 2,
                 ),
-                np.random.uniform(
+                self.rng.uniform(
                     (self.center_pos[1] - self.fixture_half_size[1]) * self.coverage_factor + self.line_width / 2,
                     (self.center_pos[1] + self.fixture_half_size[1]) * self.coverage_factor - self.line_width / 2,
                 ),
@@ -129,8 +130,8 @@ class OSXWipeArena(Arena):
             np.array: the (x,y) value of the newly sampled dirt position to add to the current dirt path
         """
         # Random chance to alter the current dirt direction
-        if np.random.uniform(0, 1) > 0.7:
-            self.direction += np.random.normal(0, 0.5)
+        if self.rng.uniform(0, 1) > 0.7:
+            self.direction += self.rng.normal(0, 0.5)
 
         posnew0 = pos[0] + 0.01 * np.sin(self.direction)
         posnew1 = pos[1] + 0.01 * np.cos(self.direction)
@@ -140,7 +141,7 @@ class OSXWipeArena(Arena):
             -0.174 - self.fixture_full_size[0] * self.coverage_factor + self.line_width / 2 <= posnew0 <= -0.174 + self.fixture_full_size[0] * self.coverage_factor - self.line_width / 2
             and -0.02 - self.fixture_full_size[1] * self.coverage_factor + self.line_width / 2 <= posnew1 <= -0.02 + self.fixture_full_size[1] * self.coverage_factor - self.line_width / 2)
         ):
-            self.direction += np.random.normal(0, 0.5)
+            self.direction += self.rng.normal(0, 0.5)
             posnew0 = pos[0] + 0.01 * np.sin(self.direction)
             posnew1 = pos[1] + 0.01 * np.cos(self.direction)
 

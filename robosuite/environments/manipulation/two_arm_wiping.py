@@ -521,7 +521,7 @@ class TwoArmWiping(TwoArmEnv):
 
         # load model for table top workspace
         mujoco_arena = OSXWipeArena(
-            fixture_full_size=(0.12, 0.16, 0.05),
+            seed=0, # Random seed
             xml=xml_path_completion("arenas/osx_arena.xml")
         )
 
