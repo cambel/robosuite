@@ -88,13 +88,34 @@ AxisSpec = namedtuple("AxisSpec", ["direction", "range", "scale"])
 #     'BTN_START': 'reset',
 # }
 
+# GAMEPAD_SPEC = {
+#     'ABS_HAT0X': AxisSpec(direction=4, range=[-1, 1], scale=1),
+#     'ABS_HAT0Y': AxisSpec(direction=3, range=[-1, 1], scale=1),
+#     'ABS_X': AxisSpec(direction=1, range=[-1, 1], scale=1),
+#     'ABS_Y': AxisSpec(direction=2, range=[-1, 1], scale=-1),
+#     'ABS_RX': '',
+#     'ABS_RY': AxisSpec(direction=0, range=[-1, 1], scale=1),
+#     'ABS_Z': AxisSpec(direction=5, range=[-1, 0], scale=-1),
+#     'ABS_RZ': AxisSpec(direction=5, range=[0, 1], scale=1),
+#     'BTN_THUMBL': '',
+#     'BTN_THUMBR': '',
+#     'BTN_NORTH': 'X',
+#     'BTN_WEST': 'Y',
+#     'BTN_SOUTH': 'A',
+#     'BTN_EAST': 'B',
+#     'BTN_TL': 'gripper',
+#     'BTN_TR': 'gripper',
+#     'BTN_SELECT': '',
+#     'BTN_START': 'reset',
+# }
+
 GAMEPAD_SPEC = {
     'ABS_HAT0X': AxisSpec(direction=4, range=[-1, 1], scale=1),
     'ABS_HAT0Y': AxisSpec(direction=3, range=[-1, 1], scale=1),
     'ABS_X': AxisSpec(direction=1, range=[-1, 1], scale=1),
-    'ABS_Y': AxisSpec(direction=2, range=[-1, 1], scale=-1),
+    'ABS_Y': AxisSpec(direction=0, range=[-1, 1], scale=1),
     'ABS_RX': '',
-    'ABS_RY': AxisSpec(direction=0, range=[-1, 1], scale=1),
+    'ABS_RY': AxisSpec(direction=2, range=[-1, 1], scale=-1),
     'ABS_Z': AxisSpec(direction=5, range=[-1, 0], scale=-1),
     'ABS_RZ': AxisSpec(direction=5, range=[0, 1], scale=1),
     'BTN_THUMBL': '',
@@ -108,6 +129,7 @@ GAMEPAD_SPEC = {
     'BTN_SELECT': '',
     'BTN_START': 'reset',
 }
+
 
 
 def scale_to_control(x, axis_scale=350.0, min_v=-1.0, max_v=1.0):
