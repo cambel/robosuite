@@ -90,6 +90,8 @@
     
     <!-- front view -->
     <camera mode="fixed" name="frontview" pos="2.0 0 1.9" quat="0.56 0.43 0.43 0.56"/>
+    <!-- close up view -->
+    <camera mode="fixed" name="closeview" pos="1.5 0 1.4" quat="0.56 0.43 0.43 0.56"/>
     <!-- bird view -->
     <camera mode="fixed" name="birdview" pos="-0.2 0 3.0" quat="0.7071 0 0 0.7071"/>
     <!-- agent view -->

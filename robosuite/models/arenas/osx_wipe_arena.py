@@ -12,25 +12,23 @@ class OSXWipeArena(Arena):
 
     def __init__(
             self,
-            fixture_full_size=(0.12, 0.16, 0.05),
-            fixture_friction=(0.01, 0.005, 0.0001),
-            fixture_offset=(0, 0, 0.858),
+            wiping_area=(0.8, 0.8, 0.05),
             num_markers=10,
-            line_width=0.03,
-            coverage_factor=0.7,
+            line_width=0.02,
+            center_pose=[-0.174, -0.14],
+            table_height = 0.8555 + 0.0025/2 + 0.003,
+            coverage_factor=0.9,
             two_clusters=False,
             seed=0,
             xml="arenas/osx_arena.xml"
     ):
         super().__init__(xml_path_completion(xml))
         self.rng = np.random.default_rng(seed)
-        self.fixture_full_size = np.array(fixture_full_size)
-        self.fixture_half_size = self.fixture_full_size / 2
-        self.fixture_friction = fixture_friction
-        self.fixture_offset = fixture_offset
-        # self.center_pos = self.bottom_pos + np.array([0, 0, -self.fixture_half_size[2]]) + self.fixture_offset
-        # print('center_pos', self.center_pos)
-        self.center_pos = np.array([-0.174, -0.04, 0.8555])
+        self.wiping_area = np.array(wiping_area)
+        self.wiping_area_half_size = self.wiping_area / 2
+
+        self.table_height = table_height
+        self.center_pos = center_pose
 
         self.num_markers = num_markers
         self.line_width = line_width
@@ -40,7 +38,6 @@ class OSXWipeArena(Arena):
 
         # Load and configure the arena
         self.configure_location()
-        print('configured location')
 
     def configure_location(self):
         # Assume the table object's name in osx_arena.xml is 'table'
@@ -72,7 +69,6 @@ class OSXWipeArena(Arena):
         """
         # Sample new initial position and direction for generated marker paths
         pos = self.sample_start_pos()
-        # pos = np.array([-0.174, -0.02])
 
         # Loop through all visual markers
         for i, marker in enumerate(self.markers):
@@ -85,7 +81,7 @@ class OSXWipeArena(Arena):
             site_id = sim.model.site_name2id(marker.sites[0])
             # Determine new position for this marker
             # position = np.array([pos[0], pos[1], self.fixture_half_size[2]])
-            position = np.array([pos[0], pos[1], 0.8555 + 0.0025/2 + 0.003])
+            position = np.array([pos[0]+self.center_pos[0], pos[1]+self.center_pos[1], self.table_height])
             # Set the current marker (body) to this new position
             sim.model.body_pos[body_id] = position
             # Reset the marker visualization -- setting geom rgba alpha value to 1
@@ -108,12 +104,12 @@ class OSXWipeArena(Arena):
         return np.array(
             (
                 self.rng.uniform(
-                    (self.center_pos[0] - self.fixture_half_size[0]) * self.coverage_factor + self.line_width / 2,
-                    (self.center_pos[0] + self.fixture_half_size[0]) * self.coverage_factor - self.line_width / 2,
+                    - self.wiping_area_half_size[0] * self.coverage_factor + self.line_width / 2,
+                    + self.wiping_area_half_size[0] * self.coverage_factor - self.line_width / 2,
                 ),
                 self.rng.uniform(
-                    (self.center_pos[1] - self.fixture_half_size[1]) * self.coverage_factor + self.line_width / 2,
-                    (self.center_pos[1] + self.fixture_half_size[1]) * self.coverage_factor - self.line_width / 2,
+                    - self.wiping_area_half_size[1] * self.coverage_factor + self.line_width / 2,
+                    + self.wiping_area_half_size[1] * self.coverage_factor - self.line_width / 2,
                 ),
             )
         )
@@ -137,13 +133,13 @@ class OSXWipeArena(Arena):
         posnew1 = pos[1] + 0.01 * np.cos(self.direction)
 
         # We keep resampling until we get a valid new position that's on the table
-        while (not (
-            -0.174 - self.fixture_full_size[0] * self.coverage_factor + self.line_width / 2 <= posnew0 <= -0.174 + self.fixture_full_size[0] * self.coverage_factor - self.line_width / 2
-            and -0.02 - self.fixture_full_size[1] * self.coverage_factor + self.line_width / 2 <= posnew1 <= -0.02 + self.fixture_full_size[1] * self.coverage_factor - self.line_width / 2)
+        while (
+            abs(posnew0) >= self.wiping_area_half_size[0] * self.coverage_factor - self.line_width / 2
+            or abs(posnew1) >= self.wiping_area_half_size[1] * self.coverage_factor - self.line_width / 2
         ):
-            self.direction += self.rng.normal(0, 0.5)
-            posnew0 = pos[0] + 0.01 * np.sin(self.direction)
-            posnew1 = pos[1] + 0.01 * np.cos(self.direction)
+            self.direction += np.random.normal(0, 0.5)
+            posnew0 = pos[0] + 0.005 * np.sin(self.direction)
+            posnew1 = pos[1] + 0.005 * np.cos(self.direction)
 
         # Return this newly sampled position
         return np.array((posnew0, posnew1))
