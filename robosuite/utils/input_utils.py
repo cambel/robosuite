@@ -250,11 +250,11 @@ def input2action(device, robot, active_arm="right", env_configuration=None, cont
 
     if not controller_config['control_delta']:
         robot.controller.update()
-        goal_ori = set_goal_orientation(action[3:6]*0.25, robot.controller.ee_ori_mat, orientation_limit=robot.controller.orientation_limits)
+        action = robot.controller.scale_action(np.concatenate([dpos, drotation]))
+        goal_ori = set_goal_orientation(action[3:6], robot.controller.ee_ori_mat, orientation_limit=robot.controller.orientation_limits)
         goal_ori = T.quat2axisangle(T.mat2quat(goal_ori))
-        goal_pos = set_goal_position(action[:3]*0.025, robot.controller.ee_pos, position_limit=robot.controller.position_limits)
+        goal_pos = set_goal_position(action[:3], robot.controller.ee_pos, position_limit=robot.controller.position_limits)
 
         action = np.concatenate([goal_pos, goal_ori, [grasp] * gripper_dof])
-
     # Return the action and grasp
     return action, grasp
