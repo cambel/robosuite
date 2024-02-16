@@ -214,7 +214,7 @@ class TwoArmWiping(TwoArmEnv):
         # settings for table top
         self.table_full_size = table_full_size
         self.table_friction = table_friction
-        self.table_offset = np.array((0.10, 0.0, 0.8))
+        self.table_offset = np.array((0.10, 0.0, 0.9))
 
         # Get config
         self.task_config = DEFAULT_WIPE_CONFIG
@@ -281,14 +281,11 @@ class TwoArmWiping(TwoArmEnv):
         # object placement initializer
         self.placement_initializer = placement_initializer
 
-        self.mujoco_objects = []
-
         super().__init__(
             robots=['UR5e', 'UR5e'],
             env_configuration='single-arm-opposed',
             controller_configs=controller_configs,
             mount_types=None,
-            # gripper_types=["Robotiq140Gripper", "Robotiq85Gripper"],
             gripper_types=["Robotiq140Gripper", "WipingGripper"],
             initialization_noise=initialization_noise,
             use_camera_obs=use_camera_obs,
@@ -505,23 +502,22 @@ class TwoArmWiping(TwoArmEnv):
         # a_bot
         self.robots[0].robot_model.set_base_xpos((-0.003, -0.527, 0.750))
         self.robots[0].robot_model.set_base_ori((0, 0, 0))
-        self.robots[0].init_qpos = np.array([1.57, -2.1, 1.4, -0.85, -1.57, 0])
-        # self.robots[0].init_qpos = np.array([1.653, -1.668, 2.337, -2.816, -1.626, 0.068])
+        self.robots[0].init_qpos = np.array([1.390, -1.949, 2.020, -1.643, -1.573, 0.0])
         # b_bot
         self.robots[1].robot_model.set_base_xpos((0.003,  0.525, 0.750))
         self.robots[1].robot_model.set_base_ori((0, 0, -np.pi))
-        # self.robots[1].init_qpos = np.array([1.57, -2.1, 1.4, -0.85, -1.57, 0])
-        # near the table
-        # self.robots[1].init_qpos = np.array([0.673, -1.907, 1.322, -0.972, -1.587, -0.897])
-        # wiping
-        self.robots[1].init_qpos = np.array([0.926, -1.323, 2.193, -2.424, -1.583, -0.643])
-
+        self.robots[1].init_qpos = np.array([0.831, -1.666, 2.364, -2.291, -1.585, -2.313])
         # Get robot's contact geoms
         self.robot_contact_geoms = self.robots[1].robot_model.contact_geoms
 
         # load model for table top workspace
         mujoco_arena = OSXWipeArena(
-            seed=0, # Random seed
+            wiping_area=(0.10, 0.10, 0.05),
+            center_pose=[-0.175, 0.0],
+            num_markers=10,
+            line_width=0.03,
+            coverage_factor=0.7,
+            seed=0,  # Random seed
             xml=xml_path_completion("arenas/osx_arena.xml")
         )
 
@@ -529,34 +525,33 @@ class TwoArmWiping(TwoArmEnv):
         mujoco_arena.set_origin([0, 0, 0])
 
         # initialize objects of interest
-        self.hammer = HammerObject(name="hammer")
-        self.mujoco_objects.append(self.hammer)
+        self.hammer = HammerObject(
+            name="pot",
+            handle_radius=(0.01, 0.015),
+            handle_length=(0.1, 0.125))
 
         # Create placement initializer
         if self.placement_initializer is not None:
             self.placement_initializer.reset()
-            self.placement_initializer.add_objects(self.mujoco_objects)
+            self.placement_initializer.add_objects(self.hammer)
         else:
             self.placement_initializer = UniformRandomSampler(
                 name="ObjectSampler",
                 mujoco_objects=self.hammer,
                 x_range=[0, 0],
                 y_range=[0, 0],
-                rotation=0,
-                # x_range=[-0.1, 0.1],
-                # y_range=[-0.1, 0.1],
-                # rotation=None,
+                rotation=np.deg2rad([90,105]),
                 rotation_axis="y",
                 ensure_object_boundary_in_range=False,
                 ensure_valid_placement=True,
-                reference_pos=self.table_offset,
+                reference_pos=np.array((-0.15, 0.0, 0.9)),
             )
 
         # task includes arena, robot, and objects of interest
         self.model = ManipulationTask(
             mujoco_arena=mujoco_arena,
             mujoco_robots=[robot.robot_model for robot in self.robots],
-            # mujoco_objects=self.mujoco_objects,
+            mujoco_objects=self.hammer,
         )
 
     def _setup_references(self):
@@ -700,15 +695,15 @@ class TwoArmWiping(TwoArmEnv):
         if not self.deterministic_reset:
             self.model.mujoco_arena.reset_arena(self.sim)
 
-        # # Reset all object positions using initializer sampler if we're not directly loading from an xml
-        # if not self.deterministic_reset:
+        # Reset all object positions using initializer sampler if we're not directly loading from an xml
+        if not self.deterministic_reset:
 
-        #     # Sample from the placement initializer for all objects
-        #     object_placements = self.placement_initializer.sample()
+            # Sample from the placement initializer for all objects
+            object_placements = self.placement_initializer.sample()
 
-        #     # Loop through all objects and reset their positions
-        #     for obj_pos, obj_quat, obj in object_placements.values():
-        #         self.sim.data.set_joint_qpos(obj.joints[0], np.concatenate([np.array(obj_pos), np.array(obj_quat)]))
+            # Loop through all objects and reset their positions
+            for obj_pos, obj_quat, obj in object_placements.values():
+                self.sim.data.set_joint_qpos(obj.joints[0], np.concatenate([np.array(obj_pos), np.array(obj_quat)]))
 
     def visualize(self, vis_settings):
         """
