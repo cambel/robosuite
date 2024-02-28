@@ -105,6 +105,11 @@ class OperationalSpaceControllerFT(Controller):
         ft_limits (2-list of float or 2-list of Iterable of floats): Only applicable if @ft_ref_flag is set to either
             "true". Sets the corresponding min / max ranges of the forces on x y z and torques on x y z in the operational space frame
         
+        force_active_case (str): determines what the controller does with the calculated active force. If "both" the wrench
+            will be the sum of wrench from position controller and active force controller; if "active" the position controller wrench is ignored,
+            leading to only direct force control; if "hybrid" the @selection_matrix will be used to select which axes are for force control and
+            which for position control; any other string will lead to just position control, the original OSC
+
         **kwargs: Does nothing; placeholder to "sink" any additional arguments so that instantiating this controller
             via an argument dict that has additional extraneous arguments won't raise an error
 
@@ -137,6 +142,7 @@ class OperationalSpaceControllerFT(Controller):
         uncouple_pos_ori=True,
         ft_ref_flag = True,
         ft_limits=(0, 20),
+        force_active_case = "no-action",
         **kwargs,  # does nothing; used so no error raised when dict is passed with extra terms used previously
     ):
 
@@ -176,6 +182,7 @@ class OperationalSpaceControllerFT(Controller):
         # desired force\torque [fx fy fz tx ty tz] in operational frame and their limits
         self.FT_reference = np.zeros(6)
         self.ft_ref_flag = ft_ref_flag
+        self.force_active_case = force_active_case if self.ft_ref_flag == True else None
         self.ft_min = self.nums2array(ft_limits[0], 6)
         self.ft_max = self.nums2array(ft_limits[1], 6)
         self.ee_ft = DeltaBuffer(dim=6) # current and last values recorded for force/torque at eef
@@ -227,6 +234,7 @@ class OperationalSpaceControllerFT(Controller):
         self.integral = 0
         self.last_error = 0
 
+        self.selection_matrix = np.zeros((6))
 
     def set_goal(self, action, set_pos=None, set_ori=None):
         """
@@ -382,7 +390,7 @@ class OperationalSpaceControllerFT(Controller):
 
         self.ee_ft.push(filtered_wrench)
         force_error = self.FT_reference - self.ee_ft.current
-        
+
         kpforce = np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])*10.0
         kdforce = np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
         kiforce = np.array([0.001, 0.001, 0.001, 0.001, 0.001, 0.001])*1000.0
@@ -411,10 +419,22 @@ class OperationalSpaceControllerFT(Controller):
             decoupled_wrench = np.concatenate([decoupled_force, decoupled_torque])
         else:
             desired_wrench = np.concatenate([desired_force, desired_torque])
-            decoupled_wrench = np.dot(lambda_full, desired_wrench)
+            decoupled_wrench = np.dot(lambda_full, desired_wrench) # lambda * Fm
+
+        # F = lambda*Fm + Fa
+        if self.force_active_case == "active":
+            decoupled_wrench  = self.F_active.current
+        elif self.force_active_case == "both":
+            decoupled_wrench += self.F_active.current
+        elif self.force_active_case == "hybrid":
+             self.selection_matrix = np.eye(6)
+             self.selection_matrix[2,2] = 0
+             decoupled_wrench = np.matmul(self.selection_matrix, decoupled_wrench.reshape(6,1)) + np.matmul((np.eye(6)-self.selection_matrix),self.F_active.current.reshape(6,1))
+        else: # case no-active, just position
+            pass
 
         # Gamma (without null torques) = J^T * F + gravity compensations
-        self.torques = np.dot(self.J_full.T, decoupled_wrench) + self.torque_compensation
+        self.torques = np.matmul(self.J_full.T, decoupled_wrench).reshape(6,) + self.torque_compensation
 
         # Calculate and add nullspace torques (nullspace_matrix^T * Gamma_null) to final torques
         # Note: Gamma_null = desired nullspace pose torques, assumed to be positional joint control relative
