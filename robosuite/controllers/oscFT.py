@@ -1,6 +1,6 @@
 import math
-
 import numpy as np
+from robosuite.utils.buffers import DeltaBuffer
 
 import robosuite.utils.transform_utils as T
 from robosuite.controllers.base_controller import Controller
@@ -145,6 +145,7 @@ class OperationalSpaceControllerFT(Controller):
             joint_indexes,
             actuator_range,
         )
+
         # Determine whether this is pos ori or just pos
         self.use_ori = control_ori
 
@@ -176,6 +177,8 @@ class OperationalSpaceControllerFT(Controller):
         self.ft_ref_flag = ft_ref_flag
         self.ft_min = self.nums2array(ft_limits[0], 6)
         self.ft_max = self.nums2array(ft_limits[1], 6)
+        self.ee_ft = DeltaBuffer(dim=6) # current and last values recorded for force/torque at eef
+        self.F_active = DeltaBuffer(dim=6) # current and last values just for active force
 
         # Verify the proposed impedance mode is supported
         assert impedance_mode in IMPEDANCE_MODES, (
@@ -219,6 +222,10 @@ class OperationalSpaceControllerFT(Controller):
 
         self.relative_ori = np.zeros(3)
         self.ori_ref = None
+
+        self.integral = 0
+        self.last_error = 0
+
 
     def set_goal(self, action, set_pos=None, set_ori=None):
         """
@@ -358,17 +365,35 @@ class OperationalSpaceControllerFT(Controller):
             position_kp = np.array(self.kp[0:9]).reshape((3,3))
             orientation_kp = np.array(self.kp[9:18]).reshape((3,3))
 
-        # F_r = kp * pos_err + kd * vel_err +? desired force
-        desired_force = np.dot(position_error, position_kp) + np.multiply(
-            vel_pos_error, self.kd[0:3]
-        ) + self.FT_reference[:3]
+        # get sensor f/t measurements from gripper site, transform to world frame
+        offset = np.array([0,0,2.943,0,0.589,0]) # offset payload in world frame
+
+        gripper_in_world = self.pose_in_world_from_name("gripper0_eef")
+        ee_force, ee_torque  = T.force_in_A_to_force_in_B(self.get_sensor_measurement("gripper0_force_ee"),
+                                                          self.get_sensor_measurement("gripper0_torque_ee"),
+                                                          gripper_in_world)
+        current_wrench = np.concatenate([ee_force,ee_torque])
+        current_wrench -= offset
+        # TODO make gripper0 not hardcoded
+
+        self.ee_ft.push(current_wrench)
+        force_error = self.FT_reference - self.ee_ft.current
+
+        kpforce = np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])*10.0
+        kdforce = np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
+        kiforce = np.array([0.001, 0.001, 0.001, 0.001, 0.001, 0.001])*1000.0
+
+        # Fm
+        desired_force = np.dot(position_error, position_kp) + np.multiply(vel_pos_error, self.kd[0:3])
 
         vel_ori_error = -self.ee_ori_vel
 
-        # Tau_r = kp * ori_err + kd * vel_err +? desired torque TODO make the ft ref changeable during operation?
-        desired_torque = np.dot(ori_error, orientation_kp) + np.multiply(
-            vel_ori_error, self.kd[3:6]
-        ) + self.FT_reference[3:]
+        # Tau_r = kp * ori_err + kd * vel_err
+        desired_torque = np.dot(ori_error, orientation_kp) + np.multiply(vel_ori_error, self.kd[3:6])
+
+        # TODO clip forces
+        F_active = self.FT_reference + self.PID(error=force_error, kp=kpforce, ki=kiforce, kd=np.zeros(6))
+        self.F_active.push(F_active)
 
         # Compute nullspace matrix (I - Jbar * J) and lambda matrices ((J * M^-1 * J^T)^-1)
         lambda_full, lambda_pos, lambda_ori, nullspace_matrix = opspace_matrices(
@@ -393,7 +418,6 @@ class OperationalSpaceControllerFT(Controller):
         self.torques += nullspace_torques(
             self.mass_matrix, nullspace_matrix, self.initial_joint, self.joint_pos, self.joint_vel
         )
-
         # Always run superclass call for any cleanups at the end
         super().run_controller()
 
@@ -461,3 +485,87 @@ class OperationalSpaceControllerFT(Controller):
     @property
     def name(self):
         return "OSC_" + self.name_suffix + "_FT"
+
+    def get_sensor_measurement(self, sensor_name):
+        """
+        Grabs relevant sensor data from the sim object
+
+        Args:
+            sensor_name (str): name of the sensor
+
+        Returns:
+            np.array: sensor values
+        """
+        sensor_idx = np.sum(self.sim.model.sensor_dim[: self.sim.model.sensor_name2id(sensor_name)])
+        sensor_dim = self.sim.model.sensor_dim[self.sim.model.sensor_name2id(sensor_name)]
+
+        return np.array(self.sim.data.sensordata[sensor_idx : sensor_idx + sensor_dim])
+
+    def pose_in_base_from_name(self, name):
+        """
+        A helper function that takes in a named data field and returns the pose
+        of that object in the base frame.
+
+        Args:
+            name (str): Name of body in sim to grab pose
+
+        Returns:
+            np.array: (4,4) array corresponding to the pose of @name in the base frame
+        """
+
+        pos_in_world = self.sim.data.get_body_xpos(name)
+        rot_in_world = self.sim.data.get_body_xmat(name).reshape((3, 3))
+        pose_in_world = T.make_pose(pos_in_world, rot_in_world)
+
+        base_pos_in_world = self.sim.data.get_body_xpos("robot0_base")
+        base_rot_in_world = self.sim.data.get_body_xmat("robot0_base").reshape((3, 3))
+        base_pose_in_world = T.make_pose(base_pos_in_world, base_rot_in_world)
+        world_pose_in_base = T.pose_inv(base_pose_in_world)
+
+        pose_in_base = T.pose_in_A_to_pose_in_B(pose_in_world, world_pose_in_base)
+        return pose_in_base
+
+    def pose_in_world_from_name(self, name):
+        """
+        A helper function that takes in a named data field and returns the pose
+        of that object in the world frame.
+
+        Args:
+            name (str): Name of body in sim to grab pose
+
+        Returns:
+            np.array: (4,4) array corresponding to the pose of @name in the world frame
+        """
+
+        pos_in_world = self.sim.data.get_body_xpos(name)
+        rot_in_world = self.sim.data.get_body_xmat(name).reshape((3, 3))
+        pose_in_world = T.make_pose(pos_in_world, rot_in_world)
+
+        return pose_in_world
+
+
+    def PID(self, error, kp, ki=None, kd=None):
+
+        windup = (np.ones_like(kp))
+        i_min = -np.array(windup)
+        i_max = np.array(windup)
+
+        dt = 1.0 / self.control_freq
+        delta_error = error - self.last_error
+
+        # Compute terms
+        self.integral += error * dt
+        p_term = kp * error
+        i_term = ki * self.integral
+        i_term = np.maximum(i_min, np.minimum(i_term, i_max))
+
+        # First delta error is huge since it was initialized at zero first, avoid considering
+        if not np.allclose(self.last_error, np.zeros_like(self.last_error)):
+            d_term = kd * delta_error / dt
+        else:
+            d_term = kd * np.zeros_like(delta_error) / dt
+
+        output = p_term + i_term + d_term
+        # Save last values
+        self.last_error = np.array(error)
+        return output
