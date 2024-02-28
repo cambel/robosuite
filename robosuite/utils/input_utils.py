@@ -231,7 +231,7 @@ def input2action(device, robot, active_arm="right", env_configuration=None, cont
         # Lastly, map to axis angle form
         drotation = T.quat2axisangle(drotation)
 
-    elif controller.name == "OSC_POSE":
+    elif controller.name == "OSC_POSE" or controller.name == "OSC_POSE_FT":
         # Flip z
         drotation[2] = -drotation[2]
         # Scale rotation for teleoperation (tuned for OSC) -- gains tuned for each device
@@ -251,7 +251,7 @@ def input2action(device, robot, active_arm="right", env_configuration=None, cont
     grasp = 1 if grasp else -1
 
     # Create action based on action space of individual robot
-    if controller.name == "OSC_POSITION":
+    if controller.name == "OSC_POSITION" or controller.name == "OSC_POSITION_FT":
         action = np.concatenate([dpos, [grasp] * gripper_dof])
     else:
         action = np.concatenate([dpos, drotation, [grasp] * gripper_dof])
