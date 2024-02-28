@@ -1,5 +1,6 @@
 import math
 import numpy as np
+from scipy.signal import butter, filtfilt
 from robosuite.utils.buffers import DeltaBuffer
 
 import robosuite.utils.transform_utils as T
@@ -376,9 +377,12 @@ class OperationalSpaceControllerFT(Controller):
         current_wrench -= offset
         # TODO make gripper0 not hardcoded
 
-        self.ee_ft.push(current_wrench)
-        force_error = self.FT_reference - self.ee_ft.current
+         # filter ft measurements
+        filtered_wrench = self.butterworth_filter(self.ee_ft, current_wrench, 2)
 
+        self.ee_ft.push(filtered_wrench)
+        force_error = self.FT_reference - self.ee_ft.current
+        
         kpforce = np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])*10.0
         kdforce = np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
         kiforce = np.array([0.001, 0.001, 0.001, 0.001, 0.001, 0.001])*1000.0
@@ -569,3 +573,37 @@ class OperationalSpaceControllerFT(Controller):
         # Save last values
         self.last_error = np.array(error)
         return output
+
+    def simple_moving_average_filter(self, buffer, current_measurement):
+        """
+        Uses current measurements to update buffer of measurements
+
+        Args:
+            buffer (DeltaBuffer): buffer of measurements
+            current_measurement (np.array): array of measurements
+
+        Returns:
+            filtered measurement
+        """
+
+        # Calculate the average of current window
+        filtered = (buffer.last + buffer.current + current_measurement) / 3
+
+        return filtered
+
+    def butterworth_filter(self, buffer, current_measurement, w):
+        """
+        Uses current measurements to update buffer of measurements with a butterworth filter
+
+        Args:
+            buffer (DeltaBuffer): buffer of measurements
+            current_measurement (np.array): array of measurements
+            w (scalar): cutoff frequency of the filter, 0 < wn < fs/2
+
+        Returns:
+            filtered measurement
+        """
+        fsc = self.control_freq
+        b, a = butter(5, w, 'low', fs=fsc)
+        signal = np.concatenate([buffer.last, buffer.current, current_measurement]).reshape(3,6)
+        return filtfilt(b, a, signal, axis=0, padlen=0)[2,:]
