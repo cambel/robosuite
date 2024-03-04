@@ -391,9 +391,9 @@ class OperationalSpaceControllerFT(Controller):
         self.ee_ft.push(filtered_wrench)
         force_error = self.FT_reference - self.ee_ft.current
 
-        kpforce = np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])*10.0
+        kpforce = np.array([1, 1, 1, 1, 1, 1])*10.0
         kdforce = np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
-        kiforce = np.array([0.001, 0.001, 0.001, 0.001, 0.001, 0.001])*1000.0
+        kiforce = np.array([1, 1, 1, 1, 1, 1])*1.0
 
         # Fm
         desired_force = np.dot(position_error, position_kp) + np.multiply(vel_pos_error, self.kd[0:3])
@@ -421,16 +421,20 @@ class OperationalSpaceControllerFT(Controller):
             desired_wrench = np.concatenate([desired_force, desired_torque])
             decoupled_wrench = np.dot(lambda_full, desired_wrench) # lambda * Fm
 
-        # F = lambda*Fm + Fa
         if self.force_active_case == "active":
+            # F = Fa
             decoupled_wrench  = self.F_active.current
         elif self.force_active_case == "both":
+            # F = lambda*Fm + Fa
             decoupled_wrench += self.F_active.current
         elif self.force_active_case == "hybrid":
-             self.selection_matrix = np.eye(6)
-             self.selection_matrix[2,2] = 0
-             decoupled_wrench = np.matmul(self.selection_matrix, decoupled_wrench.reshape(6,1)) + np.matmul((np.eye(6)-self.selection_matrix),self.F_active.current.reshape(6,1))
+            # F = S*(lambda*Fm) + (1-S)*Fa
+            self.selection_matrix = np.eye(6)
+            self.selection_matrix[0,0] = 0
+            self.selection_matrix[1,1] = 0
+            decoupled_wrench = np.matmul(self.selection_matrix, decoupled_wrench.reshape(6,1)) + np.matmul((np.eye(6)-self.selection_matrix),self.F_active.current.reshape(6,1))
         else: # case no-active, just position
+            # F = lambda*Fm
             pass
 
         # Gamma (without null torques) = J^T * F + gravity compensations
@@ -451,7 +455,7 @@ class OperationalSpaceControllerFT(Controller):
         # First, update from the superclass method
         super().update_initial_joints(initial_joints)
 
-        # We also need to reset the goal in case the old goals were set to the initial confguration
+        # We also need to reset the goal in case the old goals were set to the initial configuration
         self.reset_goal()
 
     def reset_goal(self):
