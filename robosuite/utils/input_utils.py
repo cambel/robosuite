@@ -146,7 +146,7 @@ def choose_robots(exclude_bimanual=False, use_humanoids=False):
     return list(robots)[k]
 
 
-def input2action(device, robot, active_arm="right", env_configuration=None, controller_config=None):
+def input2action(device, robot, active_arm="right", env_configuration=None, control_delta=False):
     """
     Converts an input from an active device into a valid action sequence that can be fed into an env.step() call
 
@@ -231,8 +231,12 @@ def input2action(device, robot, active_arm="right", env_configuration=None, cont
         # Flip z
         drotation[2] = -drotation[2]
         # Scale rotation for teleoperation (tuned for OSC) -- gains tuned for each device
-        drotation = drotation * 1.5 if isinstance(device, Keyboard) else drotation * 25
-        dpos = dpos * 75 if isinstance(device, Keyboard) else dpos * 75
+        if isinstance(device, Keyboard):
+            drotation = drotation * 1.5  # else drotation * 25
+            dpos = dpos * 75
+        elif isinstance(device, GamePad):
+            drotation = drotation * 25
+            dpos = dpos * 40
     elif controller.name == "OSC_POSITION":
         dpos = dpos * 75 if isinstance(device, Keyboard) else dpos * 125
     else:
@@ -248,7 +252,7 @@ def input2action(device, robot, active_arm="right", env_configuration=None, cont
     else:
         action = np.concatenate([dpos, drotation, [grasp] * gripper_dof])
 
-    if not controller_config['control_delta']:
+    if not control_delta:
         robot.controller.update()
         action = robot.controller.scale_action(np.concatenate([dpos, drotation]))
         goal_ori = set_goal_orientation(action[3:6], robot.controller.ee_ori_mat, orientation_limit=robot.controller.orientation_limits)
