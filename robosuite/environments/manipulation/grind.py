@@ -271,6 +271,7 @@ class Grind(SingleArmEnv):
         # Adjust base pose accordingly
         xpos = self.robots[0].robot_model.base_xpos_offset["table"](self.table_full_size[0])
         self.robots[0].robot_model.set_base_xpos(xpos)
+        self.robots[0].init_qpos = np.array([-0.242, -0.867, 1.993, -2.697, -1.571, -1.812])
 
         # load model for table top workspace
         mujoco_arena = TableArena(
