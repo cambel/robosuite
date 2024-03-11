@@ -5,8 +5,8 @@ interface.
 """
 
 import numpy as np
-import gymnasium as gym
-from gymnasium import spaces, Env
+import gym
+from gym import spaces, Env
 
 from robosuite.wrappers import Wrapper
 
@@ -116,6 +116,7 @@ class GymWrapper(Wrapper, gym.Env):
                 - (dict) misc information
         """
         ob_dict, reward, terminated, info = self.env.step(action)
+
         return self._flatten_obs(ob_dict), reward, terminated, False, info
 
     def compute_reward(self, achieved_goal, desired_goal, info):
