@@ -311,6 +311,10 @@ class SingleArm(Manipulator):
             return T.convert_quat(self.sim.data.get_body_xquat(self.robot_model.eef_name), to="xyzw")
 
         @sensor(modality=modality)
+        def eef_axisangle(obs_cache):
+            return T.quat2axisangle(self.sim.data.get_body_xquat(self.robot_model.eef_name))
+
+        @sensor(modality=modality)
         def eef_vel_lin(obs_cache):
             return np.array(self.sim.data.get_body_xvelp(self.robot_model.eef_name))
 
@@ -318,10 +322,10 @@ class SingleArm(Manipulator):
         def eef_vel_ang(obs_cache):
             return np.array(self.sim.data.get_body_xvelr(self.robot_model.eef_name))
 
-        sensors = [eef_pos, eef_quat, eef_vel_lin, eef_vel_ang]
-        names = [f"{pf}eef_pos", f"{pf}eef_quat", f"{pf}eef_vel_lin", f"{pf}eef_vel_ang"]
+        sensors = [eef_pos, eef_quat, eef_vel_lin, eef_vel_ang, eef_axisangle]
+        names = [f"{pf}eef_pos", f"{pf}eef_quat", f"{pf}eef_axisangle", f"{pf}eef_vel_lin", f"{pf}eef_vel_ang"]
         # Exclude eef vel by default
-        actives = [True, True, False, False]
+        actives = [True, True, True, False, False]
 
         # add in gripper sensors if this robot has a gripper
         if self.has_gripper:

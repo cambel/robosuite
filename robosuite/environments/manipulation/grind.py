@@ -1,12 +1,11 @@
-from collections import OrderedDict
-
+import multiprocessing
 import numpy as np
+import time
 
 from robosuite.environments.manipulation.single_arm_env import SingleArmEnv
 from robosuite.models.arenas import TableArena
 from robosuite.models.objects import MortarObject, MortarVisualObject
 from robosuite.models.tasks import ManipulationTask
-from robosuite.utils.mjcf_utils import CustomMaterial
 from robosuite.utils.observables import Observable, sensor
 from robosuite.utils.placement_samplers import UniformRandomSampler
 from robosuite.utils.transform_utils import convert_quat
@@ -30,10 +29,8 @@ class Grind(SingleArmEnv):
             "robots" param
 
         gripper_types (str or list of str): type of gripper, used to instantiate
-            gripper models from gripper factory. Default is "default", which is the default grippers(s) associated
-            with the robot(s) the 'robots' specification. None removes the gripper, and any other (valid) model
-            overrides the default gripper. Should either be single str if same gripper type is to be used for all
-            robots or else it should be a list of the same length as "robots" param
+            gripper models from gripper factory. For this environment, setting a value other than the default ("Grinder")
+            will raise an AssertionError, as this environment is not meant to be used with any other alternative gripper.
 
         initialization_noise (dict or list of dict): Dict containing the initialization noise parameters.
             The expected keys and corresponding value types are specified below:
@@ -130,6 +127,7 @@ class Grind(SingleArmEnv):
             segmentation setting(s) to use.
 
     Raises:
+        AssertionError: [Gripper specified]
         AssertionError: [Invalid number of robots specified]
     """
 
@@ -165,6 +163,13 @@ class Grind(SingleArmEnv):
         renderer="mujoco",
         renderer_config=None,
     ):
+
+        # Assert that the gripper type is None
+        assert (
+            gripper_types == "Grinder"
+        ), "Tried to specify gripper other than Grinder in Grind environment!"
+
+
         # settings for table top
         self.table_full_size = table_full_size
         self.table_friction = table_friction
@@ -330,6 +335,20 @@ class Grind(SingleArmEnv):
         """
         observables = super()._setup_observables()
 
+        # needed in the list of observables
+        @sensor(modality = "robot0_proprio")
+        def robot0_eef_force(obs_cache):
+            sensor_idx = np.sum(self.sim.model.sensor_dim[: self.sim.model.sensor_name2id("gripper0_force_ee")])
+            sensor_dim = self.sim.model.sensor_dim[self.sim.model.sensor_name2id("gripper0_force_ee")]
+            return np.array(self.sim.data.sensordata[sensor_idx : sensor_idx + sensor_dim])
+
+        @sensor(modality = "robot0_proprio")
+        def robot0_eef_torque(obs_cache):
+            sensor_idx = np.sum(self.sim.model.sensor_dim[: self.sim.model.sensor_name2id("gripper0_torque_ee")])
+            sensor_dim = self.sim.model.sensor_dim[self.sim.model.sensor_name2id("gripper0_torque_ee")]
+            return np.array(self.sim.data.sensordata[sensor_idx : sensor_idx + sensor_dim])
+
+
         # low-level object information
         if self.use_object_obs:
             # Get robot prefix and define observables modality
@@ -353,7 +372,7 @@ class Grind(SingleArmEnv):
                     else np.zeros(3)
                 )
 
-            sensors = [mortar_pos, mortar_quat, gripper_to_mortar_pos]
+            sensors = [mortar_pos, mortar_quat, gripper_to_mortar_pos, robot0_eef_force, robot0_eef_torque]
             names = [s.__name__ for s in sensors]
 
             # Create observables
