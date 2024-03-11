@@ -404,7 +404,7 @@ class OperationalSpaceControllerFT(Controller):
         desired_torque = np.dot(ori_error, orientation_kp) + np.multiply(vel_ori_error, self.kd[3:6])
 
         # TODO clip forces
-        F_active = self.FT_reference + self.PID(error=force_error, kp=kpforce, ki=kiforce, kd=np.zeros(6))
+        F_active = self.PID(error=force_error, kp=kpforce, ki=kiforce, kd=np.zeros(6)) #+ self.FT_reference
         self.F_active.push(F_active)
 
         # Compute nullspace matrix (I - Jbar * J) and lambda matrices ((J * M^-1 * J^T)^-1)
