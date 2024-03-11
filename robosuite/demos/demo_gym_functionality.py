@@ -26,6 +26,9 @@ The following snippet was used to demo basic functionality.
 
 To adapt our APIs to be compatible with OpenAI Gym's style, this script
 demonstrates how this can be easily achieved by using the GymWrapper.
+
+
+! Changed such that code works with gym, not gymnasium
 """
 
 import robosuite as suite
@@ -36,8 +39,9 @@ if __name__ == "__main__":
     # Notice how the environment is wrapped by the wrapper
     env = GymWrapper(
         suite.make(
-            "Lift",
-            robots="Sawyer",  # use Sawyer robot
+            env_name="Grind",
+            robots="UR5e",
+            gripper_types="Grinder",
             use_camera_obs=False,  # do not use pixel observations
             has_offscreen_renderer=False,  # not needed since not using pixel obs
             has_renderer=True,  # make sure we can render to the screen
