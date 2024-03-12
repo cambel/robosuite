@@ -336,14 +336,16 @@ class Grind(SingleArmEnv):
         """
         observables = super()._setup_observables()
 
+        pf = self.robots[0].robot_model.naming_prefix
+
         # needed in the list of observables
-        @sensor(modality = "robot0_proprio")
+        @sensor(modality=f"{pf}proprio")
         def robot0_eef_force(obs_cache):
             sensor_idx = np.sum(self.sim.model.sensor_dim[: self.sim.model.sensor_name2id("gripper0_force_ee")])
             sensor_dim = self.sim.model.sensor_dim[self.sim.model.sensor_name2id("gripper0_force_ee")]
             return np.array(self.sim.data.sensordata[sensor_idx : sensor_idx + sensor_dim])
 
-        @sensor(modality = "robot0_proprio")
+        @sensor(modality=f"{pf}proprio")
         def robot0_eef_torque(obs_cache):
             sensor_idx = np.sum(self.sim.model.sensor_dim[: self.sim.model.sensor_name2id("gripper0_torque_ee")])
             sensor_dim = self.sim.model.sensor_dim[self.sim.model.sensor_name2id("gripper0_torque_ee")]
