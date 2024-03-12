@@ -5,10 +5,34 @@ import time
 from robosuite.environments.manipulation.single_arm_env import SingleArmEnv
 from robosuite.models.arenas import TableArena
 from robosuite.models.objects import MortarObject, MortarVisualObject
-from robosuite.models.tasks import ManipulationTask
+from robosuite.models.tasks import ManipulationTask, task
 from robosuite.utils.observables import Observable, sensor
 from robosuite.utils.placement_samplers import UniformRandomSampler
 from robosuite.utils.transform_utils import convert_quat
+
+
+# Default Grind environment configuration TODO settle these
+DEFAULT_GRIND_CONFIG = {
+    # settings for reward
+    "task_complete_reward": 5.0,  # reward per episode done
+    "arm_limit_collision_penalty": -10.0,  # penalty for reaching joint limit or arm collision with the table
+    "grind_contact_reward": 0.01,  # reward for contacting something with the grinder tool
+    "ee_accel_penalty": 0,  # penalty for large end-effector accelerations
+    "excess_force_penalty_mul": 0.05,  # penalty for each step that the force is over the safety threshold
+    # settings for thresholds
+    "contact_threshold": 0.5,  # Minimum eef force to qualify as contact [N]
+    "pressure_threshold_max": 20.0,  # maximum force allowed (N)
+    "mortar_space_threshold": 0.1,  # maximum distance from the mortar the eef is allowed to diverge (m)
+    # misc settings
+    "mortar_height": 0.0047,
+    "mortar_max_radius": 0.004,
+    "print_results": True,  # Whether to print results or not
+    "get_info": False,  # Whether to grab info after each env step if not
+    "use_robot_obs": True,  # if we use robot observations (proprioception) as input to the policy
+    "use_contact_obs": True,  # if we use a binary observation for whether robot is in contact or not
+    "early_terminations": True,  # Whether we allow for early terminations or not
+    "use_condensed_obj_obs": True,  # Whether to use condensed object observation representation (only applicable if obj obs is active)
+}
 
 
 class Grind(SingleArmEnv):
@@ -126,6 +150,10 @@ class Grind(SingleArmEnv):
             [multiple / a single] segmentation(s) to use for all cameras. A list of list of str specifies per-camera
             segmentation setting(s) to use.
 
+        task_config (None or dict): Specifies the parameters relevant to this task. For a full list of expected
+            parameters, see the default configuration dict at the top of this file.
+            If None is specified, the default configuration will be used.
+
     Raises:
         AssertionError: [Gripper specified]
         AssertionError: [Invalid number of robots specified]
@@ -162,6 +190,7 @@ class Grind(SingleArmEnv):
         camera_segmentations=None,  # {None, instance, class, element}
         renderer="mujoco",
         renderer_config=None,
+        task_config=None,
     ):
 
         # Assert that the gripper type is None
@@ -169,6 +198,34 @@ class Grind(SingleArmEnv):
             gripper_types == "Grinder"
         ), "Tried to specify gripper other than Grinder in Grind environment!"
 
+        # Get config
+        self.task_config  = task_config if task_config is not None else DEFAULT_GRIND_CONFIG
+
+        self.horizon = horizon
+        # settings for the reward
+        self.reward_scale = reward_scale
+        self.reward_shaping = reward_shaping
+        self.arm_limit_collision_penalty = self.task_config["arm_limit_collision_penalty"]
+        self.grind_contact_reward = self.task_config["grind_contact_reward"]
+        self.ee_accel_penalty = self.task_config["ee_accel_penalty"]
+        self.excess_force_penalty_mul = self.task_config["excess_force_penalty_mul"]
+        # Final reward computation
+        self.task_complete_reward = self.task_config["task_complete_reward"]
+
+        # settings for thresholds
+        self.contact_threshold = self.task_config["contact_threshold"]
+        self.pressure_threshold_max = self.task_config["pressure_threshold_max"]
+        self.mortar_space_threshold = self.task_config["mortar_space_threshold"]
+
+        # misc settings
+        self.print_results = self.task_config["print_results"]
+        self.get_info = self.task_config["get_info"]
+        self.use_robot_obs = self.task_config["use_robot_obs"]
+        self.use_contact_obs = self.task_config["use_contact_obs"]
+        self.early_terminations = self.task_config["early_terminations"]
+        self.use_condensed_obj_obs = self.task_config["use_condensed_obj_obs"]
+        self.mortar_height = self.task_config["mortar_height"]
+        self.mortar_radius = self.task_config["mortar_max_radius"]
 
         # settings for table top
         self.table_full_size = table_full_size
@@ -179,11 +236,18 @@ class Grind(SingleArmEnv):
         self.reward_scale = reward_scale
         self.reward_shaping = reward_shaping
 
+        # ee resets
+        self.ee_force_bias = np.zeros(3)
+        self.ee_torque_bias = np.zeros(3)
+
         # whether to use ground-truth object states
         self.use_object_obs = use_object_obs
 
         # object placement initializer
         self.placement_initializer = placement_initializer
+
+        # set other attributes
+        self.collisions = 0
 
         super().__init__(
             robots=robots,
@@ -212,20 +276,16 @@ class Grind(SingleArmEnv):
             renderer_config=renderer_config,
         )
 
-    def reward(self, action=None):
+    def reward(self, action=None): #TODO
         """
         Reward function for the task.
         Sparse un-normalized reward:
 
-            - a discrete reward of 2.25 is provided if the mortar is lifted
+            - a discrete reward of self.task_complete_reward is provided if grinding has been done for a predetermined amount of steps
 
         Un-normalized summed components if using reward shaping:
 
             - Reaching: in [0, 1], to encourage the arm to reach the mortar
-            - Grasping: in {0, 0.25}, non-zero if arm is grasping the mortar
-            - Lifting: in {0, 1}, non-zero if arm has lifted the mortar
-
-        The sparse reward only consists of the lifting component.
 
         Note that the final reward is normalized and scaled by
         reward_scale / 2.25 as well so that the max score is equal to reward_scale
@@ -238,25 +298,56 @@ class Grind(SingleArmEnv):
         """
         reward = 0.0
 
-        # sparse completion reward
-        if self._check_success():
-            reward = 2.25
+        # Neg Reward from unwanted behaviours TODO properly deffine the if branches
+        if self.check_contact(self.robots[0].robot_model):
+            if self.reward_shaping:
+                reward = self.arm_limit_collision_penalty
+            self.collisions += 1
+        elif self.robots[0].check_q_limits():
+            if self.reward_shaping:
+                reward = self.arm_limit_collision_penalty
+            self.collisions += 1
+        elif not self._check_task_space_limits():
+            if self.reward_shaping:
+                reward = self.arm_limit_collision_penalty
+            self.collisions += 1
+        elif self._surpassed_forces():
+            if self.reward_shaping:
+                reward = self.arm_limit_collision_penalty
+            self.collisions += 1
+        else:
+            # If the arm is not colliding, not in joint limits, or flying away,
+            # check if we are grinding
+            # (we don't want to reward grinding if there are unsafe situations)
 
-        # use a shaping reward
-        elif self.reward_shaping:
+            # sparse completion reward
+            if self._check_success():
+                reward = 2.25
 
-            # reaching reward
-            mortar_pos = self.sim.data.body_xpos[self.mortar_body_id]
-            gripper_site_pos = self.sim.data.site_xpos[self.robots[0].eef_site_id]
-            dist = np.linalg.norm(gripper_site_pos - mortar_pos)
-            reaching_reward = 1 - np.tanh(10.0 * dist)
-            reward += reaching_reward
+            # use a shaping reward
+            elif self.reward_shaping:
 
-            # grasping reward
-            if self._check_grasp(gripper=self.robots[0].gripper, object_geoms=self.mortar):
-                reward += 0.25
+                # reaching reward
+                mortar_pos = self.sim.data.body_xpos[self.mortar_body_id]
+                gripper_site_pos = self.sim.data.site_xpos[self.robots[0].eef_site_id]
+                dist = np.linalg.norm(gripper_site_pos - mortar_pos)
+                reaching_reward = 1 - np.tanh(10.0 * dist)
+                reward += reaching_reward
 
-        # Scale reward if requested
+
+        # Printing results
+        if self.print_results:
+            string_to_print = (
+                "Process {pid}, timestep {ts:>4}: reward: {rw:8.4f}, collisions: {sc:>3}".format(
+                    pid=id(multiprocessing.current_process()),
+                    ts=self.timestep,
+                    rw=reward,
+                    sc=self.collisions,
+                )
+            )
+            print(string_to_print)
+
+        # Scale reward if requested #TODO
         if self.reward_scale is not None:
             reward *= self.reward_scale / 2.25
 
@@ -404,31 +495,132 @@ class Grind(SingleArmEnv):
             for obj_pos, obj_quat, obj in object_placements.values():
                 self.sim.data.set_joint_qpos(obj.joints[0], np.concatenate([np.array(obj_pos), np.array(obj_quat)]))
 
-    def visualize(self, vis_settings):
+        # ee resets - bias at initial state
+        self.ee_force_bias = np.zeros(3)
+        self.ee_torque_bias = np.zeros(3)
+
+        self.collisions = 0
+        self.timestep = 0
+
+    def _post_action(self, action):
         """
-        In addition to super call, visualize gripper site proportional to the distance to the mortar.
+        In addition to super method, add additional info if requested
 
         Args:
-            vis_settings (dict): Visualization keywords mapped to T/F, determining whether that specific
-                component should be visualized. Should have "grippers" keyword as well as any other relevant
-                options specified.
-        """
-        # Run superclass method first
-        super().visualize(vis_settings=vis_settings)
+            action (np.array): Action to execute within the environment
 
-        # Color the gripper visualization site according to its distance to the mortar
-        if vis_settings["grippers"]:
-            self._visualize_gripper_to_target(gripper=self.robots[0].gripper, target=self.mortar)
+        Returns:
+            3-tuple:
+                - (float) reward from the environment
+                - (bool) whether the current episode is completed or not
+                - (dict) info about current env step
+        """
+        reward, done, info = super()._post_action(action)
+
+        # Update force bias
+        if np.linalg.norm(self.ee_force_bias) == 0:
+            self.ee_force_bias = self.robots[0].ee_force
+            self.ee_torque_bias = self.robots[0].ee_torque
+
+        if self.get_info: # TODO what else to add here
+            info["add_vals"] = ["colls"]
+            info["colls"] = self.collisions
+
+        # allow episode to finish early if allowed
+        if self.early_terminations:
+            done = done or self._check_terminated()
+
+        return reward, done, info
+    # def _pre_action(self, action): TODO needed?
 
     def _check_success(self):
         """
-        Check if mortar has been lifted.
+        Check if task succeeded (finished working for predetermined amount of  timesteps)
 
         Returns:
-            bool: True if mortar has been lifted
+            bool: True completed task
         """
-        mortar_height = self.sim.data.body_xpos[self.mortar_body_id][2]
-        table_height = self.model.mujoco_arena.table_offset[2]
 
-        # mortar is higher than the table top above a margin
-        return mortar_height > table_height + 0.04
+        return  self.timestep > self.horizon # TODO left like this?, have another timesteps/time variable?
+
+    def _check_task_space_limits(self): # returns True if it is within limits
+        """
+        Check if the eef is not too far away from mortar
+
+        Returns:
+            bool: True within task box space limits
+        """
+
+        ee_pos = self.robots[0].recent_ee_pose.current[:3]
+        task_box = np.array([self.mortar_radius, self.mortar_radius, self.mortar_height+self.table_offset[2]]) + self.mortar_space_threshold
+        truth = np.abs(ee_pos) < task_box
+        print(all(truth))
+        print(truth)
+
+        return all(truth)
+
+    def _surpassed_forces(self): # returns True if forces surpassed predetermined threshold
+        dft = self.robots[0].controller.ee_ft.current
+
+        return not all(i < self.pressure_threshold_max for i in dft)
+
+    def _check_terminated(self):
+        """
+        Check if the task has completed one way or another. The following conditions lead to termination:
+
+            - Collision of the robot with table
+            - Task completion (amount of @horizon timesteps passed)
+            - Joint Limit reached
+            - Fly off mortar neighboring space
+            - Force way too big
+
+        Returns:
+            bool: True if episode is terminated
+        """
+
+        terminated = False
+
+        # Prematurely terminate if contacting the table with the arm
+        if self.check_contact(self.robots[0].robot_model): # TODO check if just arm or eef as well
+            if self.print_results:
+                print(40 * "-" + " COLLIDED " + 40 * "-")
+            terminated = True
+
+        # Prematurely terminate if task is success
+        if self._check_success():
+            if self.print_results:
+                print(40 * "+" + " FINISHED GRINDING " + 40 * "+")
+            terminated = True
+
+        # Prematurely terminate if joint limits reached
+        if self.robots[0].check_q_limits():
+            if self.print_results:
+                print(40 * "-" + " JOINT LIMIT " + 40 * "-")
+            terminated = True
+
+        # Prematurely terminate if robot starts to diverge too much from the mortar space
+        if not self._check_task_space_limits():
+            if self.print_results:
+                print(40 * "-" + " EXIT MORTAR SPACE " + 40 * "-")
+            terminated = True
+
+        # Prematurely terminate if robot acts with a force over predetermined threshold
+        if self._surpassed_forces():
+            if self.print_results:
+                print(40 * "-" + " FORCE LIMIT SURPASSED " + 40 * "-")
+            terminated = True
+
+        #TODO add for accelerations
+
+        return terminated
+
+    @property
+    def _has_gripper_contact(self): # TODO - used as observable, is it needed?
+        """
+        Determines whether the gripper is making contact with an object, as defined by the eef force surpassing
+        a certain threshold defined by self.contact_threshold
+
+        Returns:
+            bool: True if contact is surpasses given threshold magnitude
+        """
+        return np.linalg.norm(self.robots[0].ee_force - self.ee_force_bias) > self.contact_threshold
