@@ -1,6 +1,7 @@
 import multiprocessing
 import numpy as np
 import time
+from scipy.spatial.distance import cdist
 
 from robosuite.environments.manipulation.single_arm_env import SingleArmEnv
 from robosuite.models.arenas import TableArena
@@ -14,30 +15,32 @@ from robosuite.utils.transform_utils import convert_quat
 # Default Grind environment configuration
 DEFAULT_GRIND_CONFIG = {
     # settings for reward
-    "task_complete_reward": 5.0,  # reward per episode done
-    "arm_limit_collision_penalty": -10.0,  # penalty for reaching joint limit or arm collision with the table
+    "task_complete_reward": 50.0,  # reward per task done
     "grind_follow_reward": 1,  # reward for following the trajectory reference
     "grind_push_reward": 1,  # reward for pushing into the mortar according to te force reference
     "quickness_reward": 1,  # reward for increased velocity
     "excess_accel_penalty": 1,  # penalty for end-effector accelerations over threshold
     "excess_force_penalty": 1,  # penalty for each step that the force is over the safety threshold
-    "exit_task_space_penalty": 1, # penalty for moving too far away from the mortar task space
-    # settings for thresholds
+    "exit_task_space_penalty": 1,  # penalty for moving too far away from the mortar task space
+    "bad_behavior_penalty": -100.0,  # the penalty received in case of early termination due to bad behavior
+                                     # meaning one of the conditions from @termination_flag, collisions or joint limits
+
+    # settings for thresholds and flags
     "pressure_threshold_max": 20.0,  # maximum eef force allowed (N)
     "acceleration_threshold_max": 1.0,  # maximum eef acceleration allowed (ms^-2)
-    "mortar_space_threshold": 0.1,  # maximum distance from the mortar the eef is allowed to diverge (m)
-    "termination_flag": [False, False, False], # list of bool values representing which of the following
+    "mortar_space_threshold_max": 0.1,  # maximum distance from the mortar the eef is allowed to diverge (m)
+    "termination_flag":  [False, False, False], # list of bool values representing which of the following
                                             # conditions are taken into account for termination of episode:
                                             # eef accelerations too big, eef forces too big, eef fly away;
-                                            # collisions, joint limits and succesful termination are True by default
+                                            # collisions, joint limits and successful termination are always True
+
     # misc settings
     "mortar_height": 0.0047, # (m)
     "mortar_max_radius": 0.004, # (m)
     "print_results": False,  # Whether to print results or not
-    "get_info": False,  # Whether to grab info after each env step if not
+    "get_info": True,  # Whether to grab info after each env step if not
     "use_robot_obs": True,  # if we use robot observations (proprioception) as input to the policy
     "early_terminations": True,  # Whether we allow for early terminations or not
-    "use_condensed_obj_obs": True,  # Whether to use condensed object observation representation (only applicable if obj obs is active)
 }
 
 
@@ -197,6 +200,8 @@ class Grind(SingleArmEnv):
         renderer="mujoco",
         renderer_config=None,
         task_config=None,
+        ref_traj=None,
+        ref_force=None,
     ):
 
         # Assert that the gripper type is Grinder
@@ -208,9 +213,13 @@ class Grind(SingleArmEnv):
         self.task_config  = task_config if task_config is not None else DEFAULT_GRIND_CONFIG
 
         self.horizon = horizon
+        # Final reward computation
+        self.task_complete_reward = self.task_config["task_complete_reward"]
         # settings for the reward
         self.reward_scale = reward_scale
         self.reward_shaping = reward_shaping
+        # Normalization factor = theoretical best episode return
+        self.reward_normalization_factor = 1.0 / self.task_complete_reward
 
         self.grind_follow_reward = self.task_config["grind_follow_reward"]
         self.grind_push_reward = self.task_config["grind_push_reward"]
@@ -219,15 +228,12 @@ class Grind(SingleArmEnv):
         self.excess_accel_penalty = self.task_config["excess_accel_penalty"]
         self.excess_force_penalty = self.task_config["excess_force_penalty"]
         self.exit_task_space_penalty = self.task_config["exit_task_space_penalty"]
-        self.arm_limit_collision_penalty = self.task_config["arm_limit_collision_penalty"]
-
-        # Final reward computation
-        self.task_complete_reward = self.task_config["task_complete_reward"]
+        self.bad_behavior_penalty = self.task_config["bad_behavior_penalty"]
 
         # settings for thresholds
         self.pressure_threshold_max = self.task_config["pressure_threshold_max"]
         self.acceleration_threshold_max = self.task_config["acceleration_threshold_max"]
-        self.mortar_space_threshold = self.task_config["mortar_space_threshold"]
+        self.mortar_space_threshold_max = self.task_config["mortar_space_threshold_max"]
         self.termination_flag = self.task_config["termination_flag"]
 
         # misc settings
@@ -235,18 +241,36 @@ class Grind(SingleArmEnv):
         self.get_info = self.task_config["get_info"]
         self.use_robot_obs = self.task_config["use_robot_obs"]
         self.early_terminations = self.task_config["early_terminations"]
-        self.use_condensed_obj_obs = self.task_config["use_condensed_obj_obs"]
         self.mortar_height = self.task_config["mortar_height"]
         self.mortar_radius = self.task_config["mortar_max_radius"]
 
-        # settings for table top
+        # settings for table top and task space
         self.table_full_size = table_full_size
         self.table_friction = table_friction
         self.table_offset = np.array((0, 0, 0.8))
+        self.task_box = np.array([self.mortar_radius, self.mortar_radius, self.mortar_height+self.table_offset[2]]) + self.mortar_space_threshold_max
 
-        # reward configuration
-        self.reward_scale = reward_scale
-        self.reward_shaping = reward_shaping
+        # references to follow
+        self.ref_traj = ref_traj
+        self.ref_force = ref_force
+
+         # Assert that if both reference trajectory and reference force are given, they have the same length
+        if self.ref_force is np.ndarray and self.ref_traj is np.ndarray:
+            assert (
+                 len(self.ref_force) == len(self.ref_traj)
+            ), "Please input reference trajectory and reference force with the same dimensions"
+
+        # Assert that if at least one reference givenm it has enough waypoints for finishing in @horizon timesteps
+
+        if self.ref_force is np.ndarray or self.ref_traj is np.ndarray:
+            try:
+                self.traj_len = len(self.ref_force)
+            except:
+                self.traj_len = len(self.ref_traj)
+
+            assert (
+                self.traj_len <= self.horizon
+            ), "Reference trajectory or force cannot be completed in the specified horizon"
 
         # ee resets
         self.ee_force_bias = np.zeros(3)
@@ -261,8 +285,8 @@ class Grind(SingleArmEnv):
         # set other attributes
         self.collisions = 0
         self.f_excess = 0
+        self.a_excess = 0
         self.task_space_exits = 0
-
 
         super().__init__(
             robots=robots,
@@ -292,7 +316,7 @@ class Grind(SingleArmEnv):
         )
 
 
-    def reward(self, action=None): #TODO
+    def reward(self, action=None):
         """
         Reward function for the task.
         Sparse un-normalized reward:
@@ -301,22 +325,25 @@ class Grind(SingleArmEnv):
 
         Un-normalized summed components if using reward shaping:
 
-            - Following: in [ -1, 0] , proportional to distance between end-effector pose and
+            - Following: in [-inf, 0] , proportional to distance between end-effector pose and
               the desired reference trajectory (negative)
-            - Pushing: in [-1, 0], proportional to difference between end-effector wrench and
+            - Pushing: in [-inf, 0], proportional to difference between end-effector wrench and
               the desired reference force profile (negative)
-            - Quickness: in [ 0, 1], proportional to velocity, rewarding increase in velocity (positive)
-            - Collision / Joint Limit Penalty: in {self.arm_limit_collision_penalty, 0}, nonzero if robot arm
+            - Quickness: in [0, inf], proportional to velocity, rewarding increase in velocity (positive)
+            - Collision / Joint Limit Penalty: in {self.bad_behavior_penalty, 0}, nonzero if robot arm
               is colliding with an object or reaching joint limits
-            - Large Force Penalty: in [-inf, 0], scaled by grinding force and directly proportional to
-              self.excess_force_penalty if the current force exceeds self.pressure_threshold_max
-            - Large Acceleration Penalty: in [-inf, 0], scaled by estimated grinder acceleration and directly
-              proportional to self.excess_accel_penalty
-            - Exit Task Space Penalty: in {0, self.exit_task_space_penalty}, nonzero if grinder is
-              too far away from the mortar task space
+            - Large Force Penalty: in [-inf, 0], in the case the episode does not stop when exiting
+              (based on termination_flag):scaled by grinding force and directly proportional to
+              self.excess_force_penalty whe the current force exceeds self.pressure_threshold_max
+            - Large Acceleration Penalty: in [-inf, 0], in the case the episode does not stop when threshold passed
+              (based on termination_flag): scaled by estimated grinder acceleration and directly proportional to
+              self.excess_accel_penalty when acceleration exceeds self.acceleration_threshold_max
+            - Exit Task Space Penalty: in [-inf, 0], in the case the episode does not stop when exiting 
+              (based on termination_flag): scaled by distance of grinder from mortar task space and directly
+              proportional to self.exit_task_space_penalty when distance exceeds self.mortar_space_threshold_max
 
 
-        Note that the final reward is normalized and scaled by TODO
+        Note that the final reward is normalized and scaled by task_complete_reward, which is the best reward an episode can get
 
         Args:
             action (np array): [NOT USED]
@@ -326,20 +353,31 @@ class Grind(SingleArmEnv):
         """
         reward = 0.0
 
-        total_force_ee = np.linalg.norm(np.array(self.robots[0].recent_ee_forcetorques.current[:3]))
-
-        # Neg Reward from unwanted behaviours TODO properly define the if branches, add the thresholds and their flags
+        # TODO make the if branches nicer somehow?
+        # If the arm does not present unwanted behaviors (collisions, reaching joint limits,
+                    # or other conditions based on @termination_flag), calculate reward
+                    # (we don't want to reward grinding if there are unsafe situations)
         if self.check_contact(self.robots[0].robot_model):
             if self.reward_shaping:
-                reward = self.arm_limit_collision_penalty
+                reward = self.bad_behavior_penalty
             self.collisions += 1
         elif self.robots[0].check_q_limits():
             if self.reward_shaping:
-                reward = self.arm_limit_collision_penalty
+                reward = self.bad_behavior_penalty
             self.collisions += 1
+        elif self.termination_flag[0] and self._surpassed_accel():
+            if self.reward_shaping:
+                reward = self.bad_behavior_penalty
+            self.a_excess += 1
+        elif self.termination_flag[1] and self._surpassed_forces():
+            if self.reward_shaping:
+                reward = self.bad_behavior_penalty
+            self.f_excess += 1
+        elif self.termination_flag[2] and not self._check_task_space_limits():
+            if self.reward_shaping:
+                reward = self.bad_behavior_penalty
+            self.task_space_exits += 1
         else:
-            # If the arm is not colliding, and in joint limits, check if we are grinding
-            # (we don't want to reward grinding if there are unsafe situations)
 
             # sparse completion reward
             if self._check_success():
@@ -347,49 +385,78 @@ class Grind(SingleArmEnv):
 
             # use a shaping reward
             elif self.reward_shaping:
+                ee_pos = self.robots[0].recent_ee_pose.current[:3]
 
-                #TODO get the ref traj and force profile inside env
+                try:
+                    current_waypoint = self.timestep % self.traj_len
 
-                # Reward for pushing into mortar with desired forces
+                    # Reward for pushing into mortar with desired linear forces
+                    if self.ref_force != None:
+                        ee_ft = self.robots[0].controller.ee_ft.current[:3]
+                        distance_from_ref_force = np.linalg.norm(self.ref_force[:3,current_waypoint] - ee_ft)
+                        reward -= self.grind_push_reward * distance_from_ref_force
 
-                # Reward for following desired trajectory
+                    # Reward for following desired linear trajectory
+                    if self.ref_traj != None:
+                        distance_from_ref_traj = np.linalg.norm(self.ref_traj[:3,current_waypoint] - ee_pos)
+                        reward -= self.grind_follow_reward * distance_from_ref_traj
+                except:
+                    pass # situation when no ref given but why would you do that to it
 
-                # Reward for increased velocity
-                reward += self.quickness_reward * np.mean(abs(self.robots[0].recent_ee_vel.current))
+                # Reward for increased linear velocity
+                reward += self.quickness_reward * np.mean(abs(self.robots[0].recent_ee_vel.current[:3]))
+
+                # Cases when threshold surpassed but we don't terminate episode because of that
+                # Penalize excessive accelerations
+                if self._surpassed_accel():
+                    self.a_excess +=1
+                    reward -= self.excess_accel_penalty * np.mean(abs(self.robots[0].recent_ee_acc.current))
+
+                # Penalize excessive wrenches with the end-effector
+                if self._surpassed_forces():
+                    self.f_excess += 1
+                    reward -= self.excess_force_penalty * np.mean(abs(self.robots[0].controller.ee_ft.current))
 
                 # Penalize flying off mortar space
                 if not self._check_task_space_limits():
-                    reward -= self.exit_task_space_penalty
                     self.task_space_exits += 1
-
-                # Penalize excessive force with the end-effector
-                if self._surpassed_forces:
-                    reward -= self.excess_force_penalty * total_force_ee
-                    self.f_excess += 1
-
-                # Penalize large accelerations
-                reward -= self.excess_accel_penalty * np.mean(abs(self.robots[0].recent_ee_acc.current))
-
+                    distance_from_mortar = self.eef_dist_from_mortar(ee_pos)
+                    reward -= self.exit_task_space_penalty * distance_from_mortar
 
         # Printing results
         if self.print_results:
             string_to_print = (
-                "Process {pid}, timestep {ts:>4}: reward: {rw:8.4f}, collisions: {sc:>3}, f_excess: {fe:>3}, task_space_exit: {te:>3}".format(
+                "Process {pid}, timestep {ts:>4}: reward: {rw:8.4f}, collisions: {sc:>3}, f_excess: {fe:>3}, a_excess: {ae:>3}, task_space_exit: {te:>3}".format(
                     pid=id(multiprocessing.current_process()),
                     ts=self.timestep,
                     rw=reward,
                     sc=self.collisions,
                     fe=self.f_excess,
+                    ae=self.a_excess,
                     te=self.task_space_exits,
                 )
             )
             print(string_to_print)
 
-        # Scale reward if requested #TODO
+        # Scale reward if requested
         if self.reward_scale is not None:
-            reward *= self.reward_scale / 2.25
+            reward *= self.reward_scale * self.reward_normalization_factor
 
         return reward
+
+    def eef_dist_from_mortar(self, eef_pos): # TODO distance to cube surface,not just to corners
+        rad,mh,mz = self.task_box[1], self.task_box[2], self.task_box[2]-self.table_offset[2]
+        cube_corners = np.array([[rad,rad,0],
+                                  [rad,rad,mh],
+                                  [-rad,-rad,0],
+                                  [-rad,-rad,mh],
+                                  [rad,-rad,0],
+                                  [rad,-rad,mh],
+                                  [-rad,rad,0],
+                                  [-rad,rad,mh],])
+
+        d = cdist(eef_pos.reshape(1,3), cube_corners)
+        return min(d[0])
 
     def _load_model(self):
         """
@@ -540,6 +607,7 @@ class Grind(SingleArmEnv):
         self.collisions = 0
         self.timestep = 0
         self.f_excess = 0
+        self.a_excess = 0
         self.task_space_exits = 0
 
     def _post_action(self, action):
@@ -563,12 +631,13 @@ class Grind(SingleArmEnv):
             self.ee_torque_bias = self.robots[0].ee_torque
 
         if self.get_info:
-            info["add_vals"] = ["colls", "f_excess"]
+            info["add_vals"] = ["colls", "f_excess", "a_excess", "task_spae_exit"]
             info["colls"] = self.collisions
             info["f_excess"] = self.f_excess
+            info["a_excess"] = self.a_excess
             info["task_space_exit"] = self.task_space_exits
 
-        # allow episode to finish early if allowed
+        # allow episode to finish early if @self.early_termination True
         if self.early_terminations:
             done = done or self._check_terminated()
 
@@ -576,7 +645,7 @@ class Grind(SingleArmEnv):
 
     def _check_success(self):
         """
-        Check if task succeeded (finished working for predetermined amount of  timesteps)
+        Check if task succeeded (finished working for @horizon amount of timesteps)
 
         Returns:
             bool: True completed task
@@ -584,7 +653,7 @@ class Grind(SingleArmEnv):
 
         return  self.timestep > self.horizon
 
-    def _check_task_space_limits(self): # returns True if it is within limits
+    def _check_task_space_limits(self):
         """
         Check if the eef is not too far away from mortar
 
@@ -593,17 +662,30 @@ class Grind(SingleArmEnv):
         """
 
         ee_pos = self.robots[0].recent_ee_pose.current[:3]
-        task_box = np.array([self.mortar_radius, self.mortar_radius, self.mortar_height+self.table_offset[2]]) + self.mortar_space_threshold
-        truth = np.abs(ee_pos) < task_box
+        truth = np.abs(ee_pos) < self.task_box
 
         return all(truth)
 
-    def _surpassed_forces(self): # returns True if eef forces surpassed predetermined threshold
+    def _surpassed_forces(self):
+        """
+        Check if any of the eef wrenches surpassed predetermined threshold @self.pressure_threshold_max
+
+        Returns:
+            bool: True if at least one of the eef wrenches out of bounds
+        """
+
         dft = self.robots[0].controller.ee_ft.current
 
         return not all(i < self.pressure_threshold_max for i in dft)
 
-    def _surpassed_accel(self): # returns True if eef accelerations surpassed predetermined threshold
+    def _surpassed_accel(self):
+        """
+        Check if any of the eef accelerations surpassed predetermined threshold @self.acceleration_threshold_max
+
+        Returns:
+            bool: True if at least one of the eef acceleration out of bounds
+        """
+
         dacc = self.robots[0].recent_ee_acc.current
 
         return not all(i < self.acceleration_threshold_max for i in dacc)
@@ -637,8 +719,6 @@ class Grind(SingleArmEnv):
                       self._surpassed_accel(),
                       self._surpassed_forces(),
                       not self._check_task_space_limits()]
-
-        print([a and b for a,b in zip(termination_conditions_to_check,conditions)])
 
         for i in range(0,len(conditions)):
             if [a and b for a,b in zip(termination_conditions_to_check,conditions)][i] == True:
