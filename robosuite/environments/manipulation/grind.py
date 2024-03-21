@@ -27,7 +27,7 @@ DEFAULT_GRIND_CONFIG = {
 
     # settings for thresholds and flags
     "pressure_threshold_max": 20.0,  # maximum eef force allowed (N)
-    "acceleration_threshold_max": 1.0,  # maximum eef acceleration allowed (ms^-2)
+    "acceleration_threshold_max": 0.1,  # maximum eef acceleration allowed (ms^-2)
     "mortar_space_threshold_max": 0.1,  # maximum distance from the mortar the eef is allowed to diverge (m)
     "termination_flag":  [False, False, False], # list of bool values representing which of the following
                                             # conditions are taken into account for termination of episode:
@@ -35,10 +35,11 @@ DEFAULT_GRIND_CONFIG = {
                                             # collisions, joint limits and successful termination are always True
 
     # misc settings
-    "mortar_height": 0.0047, # (m)
-    "mortar_max_radius": 0.004, # (m)
+    "mortar_height": 0.047, # (m)
+    "mortar_max_radius": 0.04, # (m)
     "print_results": False,  # Whether to print results or not
-    "get_info": True,  # Whether to grab info after each env step if not
+    "print_early_termination": False,  # Whether to print early termination messages or not
+    "get_info": False,  # Whether to grab info after each env step if not
     "use_robot_obs": True,  # if we use robot observations (proprioception) as input to the policy
     "early_terminations": True,  # Whether we allow for early terminations or not
 }
@@ -238,6 +239,7 @@ class Grind(SingleArmEnv):
 
         # misc settings
         self.print_results = self.task_config["print_results"]
+        self.print_early_termination = self.task_config["print_early_termination"]
         self.get_info = self.task_config["get_info"]
         self.use_robot_obs = self.task_config["use_robot_obs"]
         self.early_terminations = self.task_config["early_terminations"]
@@ -314,7 +316,6 @@ class Grind(SingleArmEnv):
             renderer=renderer,
             renderer_config=renderer_config,
         )
-
 
     def reward(self, action=None):
         """
@@ -446,13 +447,13 @@ class Grind(SingleArmEnv):
 
     def eef_dist_from_mortar(self, eef_pos): # TODO distance to cube surface,not just to corners
         rad,mh,mz = self.task_box[1], self.task_box[2], self.task_box[2]-self.table_offset[2]
-        cube_corners = np.array([[rad,rad,0],
+        cube_corners = np.array([[rad,rad,mz],
                                   [rad,rad,mh],
-                                  [-rad,-rad,0],
+                                  [-rad,-rad,mz],
                                   [-rad,-rad,mh],
-                                  [rad,-rad,0],
+                                  [rad,-rad,mz],
                                   [rad,-rad,mh],
-                                  [-rad,rad,0],
+                                  [-rad,rad,mz],
                                   [-rad,rad,mh],])
 
         d = cdist(eef_pos.reshape(1,3), cube_corners)
@@ -722,7 +723,8 @@ class Grind(SingleArmEnv):
 
         for i in range(0,len(conditions)):
             if [a and b for a,b in zip(termination_conditions_to_check,conditions)][i] == True:
-                print(40 * "-" + messages[i] + 40 * "-")
+                if self.print_early_termination:
+                    print(40 * "-" + messages[i] + 40 * "-")
                 terminated = True
 
         return terminated
