@@ -116,6 +116,7 @@ class GymWrapper(Wrapper, gym.Env):
                 - (dict) misc information
         """
         ob_dict, reward, terminated, info = self.env.step(action)
+        self.env.render()
 
         return self._flatten_obs(ob_dict), reward, terminated, False, info
 
