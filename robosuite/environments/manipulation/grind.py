@@ -263,10 +263,10 @@ class Grind(SingleArmEnv):
             ), "Please input reference trajectory and reference force with the same dimensions"
 
         # Assert that if at least one reference givenm it has enough waypoints for finishing in @horizon timesteps
-
-        if self.ref_force is np.ndarray or self.ref_traj is np.ndarray:
+        if  isinstance(self.ref_force,np.ndarray) or  isinstance(self.ref_traj, np.ndarray):
             try:
                 self.traj_len = len(self.ref_force)
+
             except:
                 self.traj_len = len(self.ref_traj)
 
@@ -386,19 +386,18 @@ class Grind(SingleArmEnv):
 
             # use a shaping reward
             elif self.reward_shaping:
-                ee_pos = self.robots[0].recent_ee_pose.current[:3]
-
+                ee_pos = self.robots[0].recent_ee_pose.current[:3] # in absolute, like self.ref_traj
                 try:
                     current_waypoint = self.timestep % self.traj_len
 
                     # Reward for pushing into mortar with desired linear forces
-                    if self.ref_force != None:
+                    if self.ref_force is not None:
                         ee_ft = self.robots[0].controller.ee_ft.current[:3]
                         distance_from_ref_force = np.linalg.norm(self.ref_force[:3,current_waypoint] - ee_ft)
                         reward -= self.grind_push_reward * distance_from_ref_force
 
                     # Reward for following desired linear trajectory
-                    if self.ref_traj != None:
+                    if self.ref_traj is not None:
                         distance_from_ref_traj = np.linalg.norm(self.ref_traj[:3,current_waypoint] - ee_pos)
                         reward -= self.grind_follow_reward * distance_from_ref_traj
                 except:
