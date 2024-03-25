@@ -112,13 +112,13 @@ class GymWrapper(Wrapper, gym.Env):
                 - (np.array) flattened observations from the environment
                 - (float) reward from the environment
                 - (bool) episode ending after reaching an env terminal state
-                - (bool) episode ending after an externally defined condition
+                - (bool) episode ending after an externally defined condition - removed
                 - (dict) misc information
         """
         ob_dict, reward, terminated, info = self.env.step(action)
         self.env.render()
 
-        return self._flatten_obs(ob_dict), reward, terminated, False, info
+        return self._flatten_obs(ob_dict), reward, terminated, info
 
     def compute_reward(self, achieved_goal, desired_goal, info):
         """
