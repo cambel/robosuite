@@ -13,6 +13,7 @@ IMPEDANCE_MODES = {"fixed", "variable", "variable_kp", "variable_full_kp"}
 # TODO: Maybe better naming scheme to differentiate between input / output min / max and pos/ori limits, etc.
 # TODO: if completely functional, merge with OSC itself? ! For now just works just with fixed
 
+
 class OperationalSpaceControllerFT(Controller):
     """
     Controller for controlling robot arm via operational space control. Allows position and / or orientation control
@@ -101,10 +102,10 @@ class OperationalSpaceControllerFT(Controller):
 
         ft_ref_flag (bool): if set to true, action space has 6 additional elements corresponding to 
             forces on x y z and torques on x y z in the operational frame
-        
+
         ft_limits (2-list of float or 2-list of Iterable of floats): Only applicable if @ft_ref_flag is set to either
             "true". Sets the corresponding min / max ranges of the forces on x y z and torques on x y z in the operational space frame
-        
+
         force_active_case (str): determines what the controller does with the calculated active force. If "both" the wrench
             will be the sum of wrench from position controller and active force controller; if "active" the position controller wrench is ignored,
             leading to only direct force control; if "hybrid" the @selection_matrix will be used to select which axes are for force control and
@@ -140,11 +141,14 @@ class OperationalSpaceControllerFT(Controller):
         control_ori=True,
         control_delta=True,
         uncouple_pos_ori=True,
-        ft_ref_flag = True,
+        ft_ref_flag=True,
         ft_limits=(0, 20),
-        force_active_case = "no-action",
+        force_active_case="no-action",
+        kp_force=np.array([10., 10., 10., 10., 10., 10.]),
+        ki_force=np.array([1., 1., 1., 1., 1., 1.]),
         **kwargs,  # does nothing; used so no error raised when dict is passed with extra terms used previously
     ):
+        self.ft_prefix = eef_name.split('_')[0]
 
         super().__init__(
             sim,
@@ -185,8 +189,8 @@ class OperationalSpaceControllerFT(Controller):
         self.force_active_case = force_active_case if self.ft_ref_flag == True else None
         self.ft_min = self.nums2array(ft_limits[0], 6)
         self.ft_max = self.nums2array(ft_limits[1], 6)
-        self.ee_ft = DeltaBuffer(dim=6) # current and last values recorded for force/torque at eef
-        self.F_active = DeltaBuffer(dim=6) # current and last values just for active force
+        self.ee_ft = DeltaBuffer(dim=6)  # current and last values recorded for force/torque at eef
+        self.F_active = DeltaBuffer(dim=6)  # current and last values just for active force
 
         # Verify the proposed impedance mode is supported
         assert impedance_mode in IMPEDANCE_MODES, (
@@ -208,7 +212,7 @@ class OperationalSpaceControllerFT(Controller):
             self.kp_max = self.nums2array(kp_limits[1], 18)
 
         if self.ft_ref_flag == True:
-            self.control_dim+=6
+            self.control_dim += 6
 
         # limits
         self.position_limits = np.array(position_limits) if position_limits is not None else position_limits
@@ -234,7 +238,10 @@ class OperationalSpaceControllerFT(Controller):
         self.integral = 0
         self.last_error = 0
 
-        self.selection_matrix = np.zeros((6))
+        self.kp_force = kp_force
+        self.ki_force = ki_force
+        # Default to position control
+        self.selection_matrix = np.eye(6)
 
     def set_goal(self, action, set_pos=None, set_ori=None):
         """
@@ -269,7 +276,7 @@ class OperationalSpaceControllerFT(Controller):
             kp, delta = action[:18], action[18:]
             self.kp = np.zeros_like(kp)
             # assume positive diagonal stiffness
-            diag_indices = [0,4,8,9,13,17]
+            diag_indices = [0, 4, 8, 9, 13, 17]
             self.kp[diag_indices] = np.clip(kp[diag_indices], self.kp_min[diag_indices], self.kp_max[diag_indices])
             # other values have no min value, it can even be negative up to the -kp_max value
             other_indices = np.ones(len(kp), np.bool)
@@ -327,6 +334,20 @@ class OperationalSpaceControllerFT(Controller):
             )  # goal is the total orientation error
             self.relative_ori = np.zeros(3)  # relative orientation always starts at 0
 
+    def update(self, force=False):
+        # Override to compute F/T
+        super().update(force=force)
+
+        # get sensor f/t measurements from gripper site, transform to world frame
+        offset = np.array([0.0011635382606757878, -0.0011644652330827126, 2.9429995396193043, 0.000520645845461271, -0.00042506640050181784, -3.740287389696474e-07])  # offset payload in world frame
+
+        gripper_in_world = self.pose_in_world_from_name(f"{self.ft_prefix}_eef")
+        ee_force, ee_torque = T.force_in_A_to_force_in_B(self.get_sensor_measurement(f"{self.ft_prefix}_force_ee"),
+                                                         self.get_sensor_measurement(f"{self.ft_prefix}_torque_ee"),
+                                                         gripper_in_world)
+        self.current_wrench = np.concatenate([ee_force, ee_torque])
+        self.current_wrench -= offset
+
     def run_controller(self):
         """
         Calculates the torques required to reach the desired setpoint.
@@ -371,29 +392,15 @@ class OperationalSpaceControllerFT(Controller):
             position_kp = np.diag(self.kp[0:3])
             orientation_kp = np.diag(self.kp[3:6])
         else:
-            position_kp = np.array(self.kp[0:9]).reshape((3,3))
-            orientation_kp = np.array(self.kp[9:18]).reshape((3,3))
+            position_kp = np.array(self.kp[0:9]).reshape((3, 3))
+            orientation_kp = np.array(self.kp[9:18]).reshape((3, 3))
 
-        # get sensor f/t measurements from gripper site, transform to world frame
-        offset = np.array([0,0,2.943,0,0.589,0]) # offset payload in world frame
-
-        gripper_in_world = self.pose_in_world_from_name("gripper0_eef")
-        ee_force, ee_torque  = T.force_in_A_to_force_in_B(self.get_sensor_measurement("gripper0_force_ee"),
-                                                          self.get_sensor_measurement("gripper0_torque_ee"),
-                                                          gripper_in_world)
-        current_wrench = np.concatenate([ee_force,ee_torque])
-        current_wrench -= offset
-        # TODO make gripper0 not hardcoded
-
-         # filter ft measurements
-        filtered_wrench = self.butterworth_filter(self.ee_ft, current_wrench, 2)
+        # filter ft measurements
+        filtered_wrench = self.butterworth_filter(self.ee_ft, self.current_wrench, 2)
+        # filtered_wrench = self.current_wrench
 
         self.ee_ft.push(filtered_wrench)
         force_error = self.FT_reference - self.ee_ft.current
-
-        kpforce = np.array([1, 1, 1, 1, 1, 1])*10.0
-        kdforce = np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
-        kiforce = np.array([1, 1, 1, 1, 1, 1])*1.0
 
         # Fm
         desired_force = np.dot(position_error, position_kp) + np.multiply(vel_pos_error, self.kd[0:3])
@@ -404,7 +411,7 @@ class OperationalSpaceControllerFT(Controller):
         desired_torque = np.dot(ori_error, orientation_kp) + np.multiply(vel_ori_error, self.kd[3:6])
 
         # TODO clip forces
-        F_active = self.PID(error=force_error, kp=kpforce, ki=kiforce, kd=np.zeros(6)) #+ self.FT_reference
+        F_active = self.PID(error=force_error, kp=self.kp_force, ki=self.ki_force, kd=np.zeros(6))  # + self.FT_reference
         self.F_active.push(F_active)
 
         # Compute nullspace matrix (I - Jbar * J) and lambda matrices ((J * M^-1 * J^T)^-1)
@@ -419,26 +426,26 @@ class OperationalSpaceControllerFT(Controller):
             decoupled_wrench = np.concatenate([decoupled_force, decoupled_torque])
         else:
             desired_wrench = np.concatenate([desired_force, desired_torque])
-            decoupled_wrench = np.dot(lambda_full, desired_wrench) # lambda * Fm
+            decoupled_wrench = np.dot(lambda_full, desired_wrench)  # lambda * Fm
 
         if self.force_active_case == "active":
             # F = Fa
-            decoupled_wrench  = self.F_active.current
+            decoupled_wrench = self.F_active.current
         elif self.force_active_case == "both":
             # F = lambda*Fm + Fa
             decoupled_wrench += self.F_active.current
         elif self.force_active_case == "hybrid":
             # F = S*(lambda*Fm) + (1-S)*Fa
-            self.selection_matrix = np.eye(6)
-            self.selection_matrix[0,0] = 0
-            self.selection_matrix[1,1] = 0
-            decoupled_wrench = np.matmul(self.selection_matrix, decoupled_wrench.reshape(6,1)) + np.matmul((np.eye(6)-self.selection_matrix),self.F_active.current.reshape(6,1))
-        else: # case no-active, just position
+            decoupled_wrench = self.selection_matrix @ decoupled_wrench \
+                + (np.eye(6)-self.selection_matrix) @ self.F_active.current
+        elif self.force_active_case == "position":  # case no-active, just position
             # F = lambda*Fm
             pass
+        else:
+            raise ValueError(f"Unsupported method: {self.force_active_case}. Valid methods: active, both, hybrid, position")
 
         # Gamma (without null torques) = J^T * F + gravity compensations
-        self.torques = np.matmul(self.J_full.T, decoupled_wrench).reshape(6,) + self.torque_compensation
+        self.torques = self.J_full.T @ decoupled_wrench + self.torque_compensation
 
         # Calculate and add nullspace torques (nullspace_matrix^T * Gamma_null) to final torques
         # Note: Gamma_null = desired nullspace pose torques, assumed to be positional joint control relative
@@ -527,7 +534,7 @@ class OperationalSpaceControllerFT(Controller):
         sensor_idx = np.sum(self.sim.model.sensor_dim[: self.sim.model.sensor_name2id(sensor_name)])
         sensor_dim = self.sim.model.sensor_dim[self.sim.model.sensor_name2id(sensor_name)]
 
-        return np.array(self.sim.data.sensordata[sensor_idx : sensor_idx + sensor_dim])
+        return np.array(self.sim.data.sensordata[sensor_idx: sensor_idx + sensor_dim])
 
     def pose_in_base_from_name(self, name):
         """
@@ -570,7 +577,6 @@ class OperationalSpaceControllerFT(Controller):
         pose_in_world = T.make_pose(pos_in_world, rot_in_world)
 
         return pose_in_world
-
 
     def PID(self, error, kp, ki=None, kd=None):
 
@@ -629,5 +635,5 @@ class OperationalSpaceControllerFT(Controller):
         """
         fsc = self.control_freq
         b, a = butter(5, w, 'low', fs=fsc)
-        signal = np.concatenate([buffer.last, buffer.current, current_measurement]).reshape(3,6)
-        return filtfilt(b, a, signal, axis=0, padlen=0)[2,:]
+        signal = np.concatenate([buffer.last, buffer.current, current_measurement]).reshape(3, 6)
+        return filtfilt(b, a, signal, axis=0, padlen=0)[2, :]
