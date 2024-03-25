@@ -186,7 +186,7 @@ class OperationalSpaceControllerFT(Controller):
         # desired force\torque [fx fy fz tx ty tz] in operational frame and their limits
         self.FT_reference = np.zeros(6)
         self.ft_ref_flag = ft_ref_flag
-        self.force_active_case = force_active_case if self.ft_ref_flag == True else None
+        self.force_active_case = force_active_case if self.ft_ref_flag == True else "position"
         self.ft_min = self.nums2array(ft_limits[0], 6)
         self.ft_max = self.nums2array(ft_limits[1], 6)
         self.ee_ft = DeltaBuffer(dim=6)  # current and last values recorded for force/torque at eef
