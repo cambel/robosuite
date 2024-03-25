@@ -9,7 +9,8 @@ from robosuite.models.objects import MortarObject, MortarVisualObject
 from robosuite.models.tasks import ManipulationTask, task
 from robosuite.utils.observables import Observable, sensor
 from robosuite.utils.placement_samplers import UniformRandomSampler
-from robosuite.utils.transform_utils import convert_quat
+from robosuite.utils.transform_utils import axisangle2quat, convert_quat, mat2quat, quat2axisangle
+from ur_control import spalg, transformations
 
 
 # Default Grind environment configuration
@@ -29,14 +30,14 @@ DEFAULT_GRIND_CONFIG = {
     "pressure_threshold_max": 20.0,  # maximum eef force allowed (N)
     "acceleration_threshold_max": 0.1,  # maximum eef acceleration allowed (ms^-2)
     "mortar_space_threshold_max": 0.1,  # maximum distance from the mortar the eef is allowed to diverge (m)
-    "termination_flag":  [False, False, False], # list of bool values representing which of the following
-                                            # conditions are taken into account for termination of episode:
-                                            # eef accelerations too big, eef forces too big, eef fly away;
-                                            # collisions, joint limits and successful termination are always True
+    "termination_flag":  [False, False, False],  # list of bool values representing which of the following
+    # conditions are taken into account for termination of episode:
+    # eef accelerations too big, eef forces too big, eef fly away;
+    # collisions, joint limits and successful termination are always True
 
     # misc settings
-    "mortar_height": 0.047, # (m)
-    "mortar_max_radius": 0.04, # (m)
+    "mortar_height": 0.047,  # (m)
+    "mortar_max_radius": 0.04,  # (m)
     "print_results": False,  # Whether to print results or not
     "print_early_termination": False,  # Whether to print early termination messages or not
     "get_info": False,  # Whether to grab info after each env step if not
@@ -211,7 +212,7 @@ class Grind(SingleArmEnv):
         ), "Tried to specify gripper other than Grinder in Grind environment!"
 
         # Get config
-        self.task_config  = task_config if task_config is not None else DEFAULT_GRIND_CONFIG
+        self.task_config = task_config if task_config is not None else DEFAULT_GRIND_CONFIG
 
         self.horizon = horizon
         # Final reward computation
@@ -256,19 +257,19 @@ class Grind(SingleArmEnv):
         self.ref_traj = ref_traj
         self.ref_force = ref_force
 
-         # Assert that if both reference trajectory and reference force are given, they have the same length
+        # Assert that if both reference trajectory and reference force are given, they have the same length
         if self.ref_force is np.ndarray and self.ref_traj is np.ndarray:
             assert (
-                 len(self.ref_force) == len(self.ref_traj)
+                len(self.ref_force) == len(self.ref_traj)
             ), "Please input reference trajectory and reference force with the same dimensions"
 
-        # Assert that if at least one reference givenm it has enough waypoints for finishing in @horizon timesteps
-        if  isinstance(self.ref_force,np.ndarray) or  isinstance(self.ref_traj, np.ndarray):
+        # Assert that if at least one reference given it has enough waypoints for finishing in @horizon timesteps
+        if isinstance(self.ref_force, np.ndarray) or isinstance(self.ref_traj, np.ndarray):
             try:
-                self.traj_len = len(self.ref_force)
+                self.traj_len = self.ref_force.shape[1]
 
             except:
-                self.traj_len = len(self.ref_traj)
+                self.traj_len = self.ref_traj.shape[1]
 
             assert (
                 self.traj_len <= self.horizon
@@ -317,6 +318,20 @@ class Grind(SingleArmEnv):
             renderer_config=renderer_config,
         )
 
+    def step(self, action):
+        # online tracking of the reference trajectory
+        residual_action = np.zeros_like(action)
+        current_waypoint = self.timestep % self.traj_len
+        residual_action[:3] = self.ref_traj[:3, current_waypoint] - self.robots[0].controller.ee_pos
+        ee_quat = mat2quat(self.robots[0].controller.ee_ori_mat)
+        ref_quat = axisangle2quat(self.ref_traj[3:, current_waypoint])
+        residual_action[3:] = spalg.quaternions_orientation_error(ref_quat, ee_quat)
+
+        # add policy action
+        scaled_action = np.interp(action, [-1, 1], [-0.05, 0.05])  # kind of linear mapping
+        action = residual_action + scaled_action
+        return super().step(action)
+
     def reward(self, action=None):
         """
         Reward function for the task.
@@ -356,8 +371,8 @@ class Grind(SingleArmEnv):
 
         # TODO make the if branches nicer somehow?
         # If the arm does not present unwanted behaviors (collisions, reaching joint limits,
-                    # or other conditions based on @termination_flag), calculate reward
-                    # (we don't want to reward grinding if there are unsafe situations)
+        # or other conditions based on @termination_flag), calculate reward
+        # (we don't want to reward grinding if there are unsafe situations)
         if self.check_contact(self.robots[0].robot_model):
             if self.reward_shaping:
                 reward = self.bad_behavior_penalty
@@ -386,22 +401,22 @@ class Grind(SingleArmEnv):
 
             # use a shaping reward
             elif self.reward_shaping:
-                ee_pos = self.robots[0].recent_ee_pose.current[:3] # in absolute, like self.ref_traj
+                ee_pos = self.robots[0].recent_ee_pose.current[:3]  # in absolute, like self.ref_traj
                 try:
                     current_waypoint = self.timestep % self.traj_len
 
                     # Reward for pushing into mortar with desired linear forces
                     if self.ref_force is not None:
                         ee_ft = self.robots[0].controller.ee_ft.current[:3]
-                        distance_from_ref_force = np.linalg.norm(self.ref_force[:3,current_waypoint] - ee_ft)
+                        distance_from_ref_force = np.linalg.norm(self.ref_force[:3, current_waypoint] - ee_ft)
                         reward -= self.grind_push_reward * distance_from_ref_force
 
                     # Reward for following desired linear trajectory
                     if self.ref_traj is not None:
-                        distance_from_ref_traj = np.linalg.norm(self.ref_traj[:3,current_waypoint] - ee_pos)
+                        distance_from_ref_traj = np.linalg.norm(self.ref_traj[:3, current_waypoint] - ee_pos)
                         reward -= self.grind_follow_reward * distance_from_ref_traj
                 except:
-                    pass # situation when no ref given but why would you do that to it
+                    pass  # situation when no ref given but why would you do that to it
 
                 # Reward for increased linear velocity
                 reward += self.quickness_reward * np.mean(abs(self.robots[0].recent_ee_vel.current[:3]))
@@ -409,7 +424,7 @@ class Grind(SingleArmEnv):
                 # Cases when threshold surpassed but we don't terminate episode because of that
                 # Penalize excessive accelerations
                 if self._surpassed_accel():
-                    self.a_excess +=1
+                    self.a_excess += 1
                     reward -= self.excess_accel_penalty * np.mean(abs(self.robots[0].recent_ee_acc.current))
 
                 # Penalize excessive wrenches with the end-effector
@@ -444,18 +459,18 @@ class Grind(SingleArmEnv):
 
         return reward
 
-    def eef_dist_from_mortar(self, eef_pos): # TODO distance to cube surface,not just to corners
-        rad,mh,mz = self.task_box[1], self.task_box[2], self.task_box[2]-self.table_offset[2]
-        cube_corners = np.array([[rad,rad,mz],
-                                  [rad,rad,mh],
-                                  [-rad,-rad,mz],
-                                  [-rad,-rad,mh],
-                                  [rad,-rad,mz],
-                                  [rad,-rad,mh],
-                                  [-rad,rad,mz],
-                                  [-rad,rad,mh],])
+    def eef_dist_from_mortar(self, eef_pos):  # TODO distance to cube surface,not just to corners
+        rad, mh, mz = self.task_box[1], self.task_box[2], self.task_box[2]-self.table_offset[2]
+        cube_corners = np.array([[rad, rad, mz],
+                                 [rad, rad, mh],
+                                 [-rad, -rad, mz],
+                                 [-rad, -rad, mh],
+                                 [rad, -rad, mz],
+                                 [rad, -rad, mh],
+                                 [-rad, rad, mz],
+                                 [-rad, rad, mh],])
 
-        d = cdist(eef_pos.reshape(1,3), cube_corners)
+        d = cdist(eef_pos.reshape(1, 3), cube_corners)
         return min(d[0])
 
     def _load_model(self):
@@ -539,14 +554,13 @@ class Grind(SingleArmEnv):
         def robot0_eef_force(obs_cache):
             sensor_idx = np.sum(self.sim.model.sensor_dim[: self.sim.model.sensor_name2id("gripper0_force_ee")])
             sensor_dim = self.sim.model.sensor_dim[self.sim.model.sensor_name2id("gripper0_force_ee")]
-            return np.array(self.sim.data.sensordata[sensor_idx : sensor_idx + sensor_dim])
+            return np.array(self.sim.data.sensordata[sensor_idx: sensor_idx + sensor_dim])
 
         @sensor(modality=f"{pf}proprio")
         def robot0_eef_torque(obs_cache):
             sensor_idx = np.sum(self.sim.model.sensor_dim[: self.sim.model.sensor_name2id("gripper0_torque_ee")])
             sensor_dim = self.sim.model.sensor_dim[self.sim.model.sensor_name2id("gripper0_torque_ee")]
-            return np.array(self.sim.data.sensordata[sensor_idx : sensor_idx + sensor_dim])
-
+            return np.array(self.sim.data.sensordata[sensor_idx: sensor_idx + sensor_dim])
 
         # low-level object information
         if self.use_object_obs:
@@ -651,7 +665,7 @@ class Grind(SingleArmEnv):
             bool: True completed task
         """
 
-        return  self.timestep > self.horizon
+        return self.timestep > self.horizon
 
     def _check_task_space_limits(self):
         """
@@ -720,11 +734,10 @@ class Grind(SingleArmEnv):
                       self._surpassed_forces(),
                       not self._check_task_space_limits()]
 
-        for i in range(0,len(conditions)):
-            if [a and b for a,b in zip(termination_conditions_to_check,conditions)][i] == True:
+        for i in range(0, len(conditions)):
+            if [a and b for a, b in zip(termination_conditions_to_check, conditions)][i] == True:
                 if self.print_early_termination:
                     print(40 * "-" + messages[i] + 40 * "-")
                 terminated = True
 
         return terminated
-
