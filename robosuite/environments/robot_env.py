@@ -537,17 +537,17 @@ class RobotEnv(MujocoEnv):
                     self.camera_widths = (
                         self.camera_widths[:start_idx]
                         + [self.camera_widths[start_idx]] * (end_idx - start_idx)
-                        + self.camera_widths[(start_idx + 1) :]
+                        + self.camera_widths[(start_idx + 1):]
                     )
                     self.camera_heights = (
                         self.camera_heights[:start_idx]
                         + [self.camera_heights[start_idx]] * (end_idx - start_idx)
-                        + self.camera_heights[(start_idx + 1) :]
+                        + self.camera_heights[(start_idx + 1):]
                     )
                     self.camera_depths = (
                         self.camera_depths[:start_idx]
                         + [self.camera_depths[start_idx]] * (end_idx - start_idx)
-                        + self.camera_depths[(start_idx + 1) :]
+                        + self.camera_depths[(start_idx + 1):]
                     )
                 else:
                     # We simply add this camera to the temp_names
@@ -557,7 +557,7 @@ class RobotEnv(MujocoEnv):
 
     def _pre_action(self, action, policy_step=False):
         """
-        Overrides the superclass method to control the robot(s) within this enviornment using their respective
+        Overrides the superclass method to control the robot(s) within this environment using their respective
         controllers using the passed actions and gripper control.
 
         Args:
@@ -579,7 +579,7 @@ class RobotEnv(MujocoEnv):
         # Update robot joints based on controller actions
         cutoff = 0
         for idx, robot in enumerate(self.robots):
-            robot_action = action[cutoff : cutoff + robot.action_dim]
+            robot_action = action[cutoff: cutoff + robot.action_dim]
             robot.control(robot_action, policy_step=policy_step)
             cutoff += robot.action_dim
 
