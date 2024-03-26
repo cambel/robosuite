@@ -319,18 +319,23 @@ class Grind(SingleArmEnv):
         )
 
     def step(self, action):
-        # online tracking of the reference trajectory
-        residual_action = np.zeros_like(action)
-        current_waypoint = self.timestep % self.traj_len
-        residual_action[:3] = self.ref_traj[:3, current_waypoint] - self.robots[0].controller.ee_pos
-        ee_quat = mat2quat(self.robots[0].controller.ee_ori_mat)
-        ref_quat = axisangle2quat(self.ref_traj[3:, current_waypoint])
-        residual_action[3:] = spalg.quaternions_orientation_error(ref_quat, ee_quat)
+        try:
 
-        # add policy action
-        scaled_action = np.interp(action, [-1, 1], [-0.05, 0.05])  # kind of linear mapping
-        action = residual_action + scaled_action
-        return super().step(action)
+            # online tracking of the reference trajectory
+            residual_action = np.zeros_like(action)
+            current_waypoint = self.timestep % self.traj_len
+            residual_action[:3] = self.ref_traj[:3, current_waypoint] - self.robots[0].controller.ee_pos
+            ee_quat = mat2quat(self.robots[0].controller.ee_ori_mat)
+            ref_quat = axisangle2quat(self.ref_traj[3:, current_waypoint])
+            residual_action[3:] = spalg.quaternions_orientation_error(ref_quat, ee_quat)
+
+            # add policy action
+            scaled_action = np.interp(action, [-1, 1], [-0.05, 0.05])  # kind of linear mapping
+            action = residual_action + scaled_action
+            return super().step(action)
+        except:
+            return super().step(action)
+
 
     def reward(self, action=None):
         """
