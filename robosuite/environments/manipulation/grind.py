@@ -1,6 +1,5 @@
 import multiprocessing
 import numpy as np
-import time
 from scipy.spatial.distance import cdist
 
 from robosuite.environments.manipulation.single_arm_env import SingleArmEnv
@@ -9,8 +8,8 @@ from robosuite.models.objects import MortarObject, MortarVisualObject
 from robosuite.models.tasks import ManipulationTask, task
 from robosuite.utils.observables import Observable, sensor
 from robosuite.utils.placement_samplers import UniformRandomSampler
-from robosuite.utils.transform_utils import axisangle2quat, convert_quat, mat2quat, quat2axisangle
-from ur_control import spalg, transformations
+from robosuite.utils.transform_utils import axisangle2quat, convert_quat, mat2quat
+from ur_control import spalg
 
 
 # Default Grind environment configuration
@@ -443,6 +442,10 @@ class Grind(SingleArmEnv):
                     distance_from_mortar = self.eef_dist_from_mortar(ee_pos)
                     reward -= self.exit_task_space_penalty * distance_from_mortar
 
+        # Scale reward if requested
+        if self.reward_scale is not None:
+            reward *= self.reward_scale * self.reward_normalization_factor
+
         # Printing results
         if self.print_results:
             string_to_print = (
@@ -458,25 +461,16 @@ class Grind(SingleArmEnv):
             )
             print(string_to_print)
 
-        # Scale reward if requested
-        if self.reward_scale is not None:
-            reward *= self.reward_scale * self.reward_normalization_factor
-
         return reward
 
-    def eef_dist_from_mortar(self, eef_pos):  # TODO distance to cube surface,not just to corners
-        rad, mh, mz = self.task_box[1], self.task_box[2], self.task_box[2]-self.table_offset[2]
-        cube_corners = np.array([[rad, rad, mz],
-                                 [rad, rad, mh],
-                                 [-rad, -rad, mz],
-                                 [-rad, -rad, mh],
-                                 [rad, -rad, mz],
-                                 [rad, -rad, mh],
-                                 [-rad, rad, mz],
-                                 [-rad, rad, mh],])
+    def eef_dist_from_mortar(self,eef_pos):
+        # assumes cube is axis aligned and with corners +-self.task_box[0], +-self.task_box[1], +-self.task_box[2]
+        x = eef_pos[0]
+        y = eef_pos[1]
+        z = eef_pos[2]
 
-        d = cdist(eef_pos.reshape(1, 3), cube_corners)
-        return min(d[0])
+        dist = np.sqrt( (np.max([0.0, np.abs(x)-self.task_box[0]]))**2 + (np.max([0.0, np.abs(y) - self.task_box[1]]))**2 + (np.max([0.0, np.abs(z) - self.task_box[2]]))**2)
+        return dist
 
     def _load_model(self):
         """
@@ -674,7 +668,7 @@ class Grind(SingleArmEnv):
 
     def _check_task_space_limits(self):
         """
-        Check if the eef is not too far away from mortar
+        Check if the eef is not too far away from mortar, works because mortar space center is at [0,0,0], does it need generalization?
 
         Returns:
             bool: True within task box space limits
