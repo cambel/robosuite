@@ -290,6 +290,16 @@ class Grind(SingleArmEnv):
         self.a_excess = 0
         self.task_space_exits = 0
 
+        # for step log in npz
+        self.timesteps   = []
+        self.waypoint    = []
+        self.action_in   = []
+        self.res_action  = []
+        self.scl_action  = []
+        self.current_ref = []
+        self.sum_action  = []
+        self.current_pos = []
+
         super().__init__(
             robots=robots,
             env_configuration=env_configuration,
@@ -329,7 +339,30 @@ class Grind(SingleArmEnv):
             residual_action[3:] = spalg.quaternions_orientation_error(ref_quat, ee_quat)
 
             # add policy action
-            scaled_action = np.interp(action, [-1, 1], [-0.05, 0.05])  # kind of linear mapping
+            scaled_action = np.interp(action, [-1, 1], [-0.05, 0.05])  # kind of linear mapping to controller.json min max output
+
+            # save variables during training
+            self.timesteps.append(self.timestep)
+            self.waypoint.append(current_waypoint)
+            self.action_in.append(action)
+            self.res_action.append(residual_action)
+            self.scl_action.append(scaled_action)
+            self.current_ref.append(self.ref_traj[:,current_waypoint])
+            self.sum_action.append(residual_action + scaled_action)
+            self.current_pos.append(self.robots[0].controller.ee_pos)
+
+            np.savez(
+                "step_actions_correct.npz",
+                timesteps  = self.timesteps,
+                waypoint   = self.waypoint,
+                action_in  = self.action_in,
+                res_action = self.res_action,
+                scl_action = self.scl_action,
+                crnt_ref   = self.current_ref,
+                sum_action = self.sum_action,
+                crnt_pos   = self.current_pos
+            )
+
             action = residual_action + scaled_action
             return super().step(action)
         except:
