@@ -203,6 +203,7 @@ class Grind(SingleArmEnv):
         task_config=None,
         ref_traj=None,
         ref_force=None,
+        log_dir="",
     ):
 
         # Assert that the gripper type is Grinder
@@ -245,6 +246,7 @@ class Grind(SingleArmEnv):
         self.early_terminations = self.task_config["early_terminations"]
         self.mortar_height = self.task_config["mortar_height"]
         self.mortar_radius = self.task_config["mortar_max_radius"]
+        self.log_dir = log_dir
 
         # settings for table top and task space
         self.table_full_size = table_full_size
@@ -352,7 +354,7 @@ class Grind(SingleArmEnv):
             self.current_pos.append(self.robots[0].controller.ee_pos)
 
             np.savez(
-                "step_actions_correct.npz",
+                self.log_dir + "/step_actions.npz",
                 timesteps  = self.timesteps,
                 waypoint   = self.waypoint,
                 action_in  = self.action_in,
@@ -406,7 +408,6 @@ class Grind(SingleArmEnv):
         """
         reward = 0.0
 
-        # TODO make the if branches nicer somehow?
         # If the arm does not present unwanted behaviors (collisions, reaching joint limits,
         # or other conditions based on @termination_flag), calculate reward
         # (we don't want to reward grinding if there are unsafe situations)
