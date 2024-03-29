@@ -204,6 +204,7 @@ class Grind(SingleArmEnv):
         ref_traj=None,
         ref_force=None,
         log_dir="",
+        evaluate=False,
     ):
 
         # Assert that the gripper type is Grinder
@@ -247,6 +248,7 @@ class Grind(SingleArmEnv):
         self.mortar_height = self.task_config["mortar_height"]
         self.mortar_radius = self.task_config["mortar_max_radius"]
         self.log_dir = log_dir
+        self.evaluate = evaluate
 
         # settings for table top and task space
         self.table_full_size = table_full_size
@@ -353,8 +355,13 @@ class Grind(SingleArmEnv):
             self.sum_action.append(residual_action + scaled_action)
             self.current_pos.append(self.robots[0].controller.ee_pos)
 
+            if self.evaluate:
+                log_filename = self.log_dir + "/step_actions_eval.npz"
+            else:
+                log_filename = self.log_dir + "/step_actions.npz"
+
             np.savez(
-                self.log_dir + "/step_actions.npz",
+                log_filename,
                 timesteps  = self.timesteps,
                 waypoint   = self.waypoint,
                 action_in  = self.action_in,
