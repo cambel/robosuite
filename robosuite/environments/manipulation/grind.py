@@ -336,12 +336,7 @@ class Grind(SingleArmEnv):
         try:
 
             # online tracking of the reference trajectory
-            residual_action = np.zeros_like(action)
-            current_waypoint = self.timestep % self.traj_len
-            residual_action[:3] = self.ref_traj[:3, current_waypoint] - self.robots[0].controller.ee_pos
-            ee_quat = mat2quat(self.robots[0].controller.ee_ori_mat)
-            ref_quat = axisangle2quat(self.ref_traj[3:, current_waypoint])
-            residual_action[3:] = spalg.quaternions_orientation_error(ref_quat, ee_quat)
+            residual_action = self._compute_relative_distance()
 
             # add policy action
             scaled_action = np.interp(action, [-1, 1], [-0.02, 0.02])  # kind of linear mapping to controller.json min max output
@@ -350,6 +345,7 @@ class Grind(SingleArmEnv):
             scaled_action[2] = 0.0
 
             if self.log_details:
+                current_waypoint = self.timestep % self.traj_len
                 # save variables during training
                 self.timesteps.append(self.timestep)
                 self.waypoint.append(current_waypoint)
@@ -382,6 +378,14 @@ class Grind(SingleArmEnv):
         except:
             return super().step(action)
 
+    def _compute_relative_distance(self):
+        relative_distance = np.zeros(6)
+        current_waypoint = self.timestep % self.traj_len
+        relative_distance[:3] = self.ref_traj[:3, current_waypoint] - self.robots[0].controller.ee_pos
+        ee_quat = mat2quat(self.robots[0].controller.ee_ori_mat)
+        ref_quat = axisangle2quat(self.ref_traj[3:, current_waypoint])
+        relative_distance[3:] = spalg.quaternions_orientation_error(ref_quat, ee_quat)
+        return relative_distance
 
     def reward(self, action=None):
         """
@@ -463,7 +467,7 @@ class Grind(SingleArmEnv):
 
                     # Reward for following desired linear trajectory
                     if self.ref_traj is not None:
-                        distance_from_ref_traj = np.linalg.norm(self.ref_traj[:3, current_waypoint] - ee_pos)
+                        distance_from_ref_traj = np.linalg.norm(self._compute_relative_distance())
                         reward -= self.grind_follow_reward * distance_from_ref_traj
                 except:
                     pass  # situation when no ref given but why would you do that to it
@@ -594,6 +598,10 @@ class Grind(SingleArmEnv):
 
         pf = self.robots[0].robot_model.naming_prefix
 
+        @sensor(modality=f"{pf}proprio")
+        def robot0_relative_pose(obs_cache):
+            return self._compute_relative_distance()
+
         # needed in the list of observables
         @sensor(modality=f"{pf}proprio")
         def robot0_eef_force(obs_cache):
@@ -630,7 +638,7 @@ class Grind(SingleArmEnv):
                     else np.zeros(3)
                 )
 
-            sensors = [mortar_pos, mortar_quat, gripper_to_mortar_pos, robot0_eef_force, robot0_eef_torque]
+            sensors = [mortar_pos, mortar_quat, gripper_to_mortar_pos, robot0_eef_force, robot0_eef_torque, robot0_relative_pose]
             names = [s.__name__ for s in sensors]
 
             # Create observables
