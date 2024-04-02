@@ -451,15 +451,15 @@ class Grind(SingleArmEnv):
 
             # use a shaping reward
             elif self.reward_shaping:
-                ee_pos = self.robots[0].controller.ee_pos[:3] # in absolute, like self.ref_traj
+                ee_pos = self.robots[0].controller.ee_pos[:3]  # in absolute, like self.ref_traj
                 try:
                     current_waypoint = self.timestep % self.traj_len
 
                     # Reward for pushing into mortar with desired linear forces
-                    if self.ref_force is not None:
-                        ee_ft = self.robots[0].controller.ee_ft.current[:3]
-                        distance_from_ref_force = np.linalg.norm(self.ref_force[:3, current_waypoint] - ee_ft)
-                        reward -= self.grind_push_reward * distance_from_ref_force
+                    # if self.ref_force is not None:
+                    #     ee_ft = self.robots[0].controller.ee_ft.current[:3]
+                    #     distance_from_ref_force = np.linalg.norm(self.ref_force[:3, current_waypoint] - ee_ft)
+                    #     reward -= self.grind_push_reward * distance_from_ref_force
 
                     # Reward for following desired linear trajectory
                     if self.ref_traj is not None:
@@ -468,29 +468,29 @@ class Grind(SingleArmEnv):
                 except:
                     pass  # situation when no ref given but why would you do that to it
 
-                # Reward for increased linear velocity
-                reward += self.quickness_reward * np.mean(abs(self.robots[0].recent_ee_vel.current[:3]))
+                # # Reward for increased linear velocity
+                # reward += self.quickness_reward * np.mean(abs(self.robots[0].recent_ee_vel.current[:3]))
 
-                # Cases when threshold surpassed but we don't terminate episode because of that
-                # Penalize excessive accelerations
-                if self._surpassed_accel():
-                    self.a_excess += 1
-                    reward -= self.excess_accel_penalty * np.mean(abs(self.robots[0].recent_ee_acc.current))
+                # # Cases when threshold surpassed but we don't terminate episode because of that
+                # # Penalize excessive accelerations
+                # if self._surpassed_accel():
+                #     self.a_excess += 1
+                #     reward -= self.excess_accel_penalty * np.mean(abs(self.robots[0].recent_ee_acc.current))
 
-                # Penalize excessive wrenches with the end-effector
-                if self._surpassed_forces():
-                    self.f_excess += 1
-                    reward -= self.excess_force_penalty * np.mean(abs(self.robots[0].controller.ee_ft.current))
+                # # Penalize excessive wrenches with the end-effector
+                # if self._surpassed_forces():
+                #     self.f_excess += 1
+                #     reward -= self.excess_force_penalty * np.mean(abs(self.robots[0].controller.ee_ft.current))
 
-                # Penalize flying off mortar space
-                if not self._check_task_space_limits():
-                    self.task_space_exits += 1
-                    distance_from_mortar = self.eef_dist_from_mortar(ee_pos)
-                    reward -= self.exit_task_space_penalty * distance_from_mortar
+                # # Penalize flying off mortar space
+                # if not self._check_task_space_limits():
+                #     self.task_space_exits += 1
+                #     distance_from_mortar = self.eef_dist_from_mortar(ee_pos)
+                #     reward -= self.exit_task_space_penalty * distance_from_mortar
 
         # Scale reward if requested
-        if self.reward_scale is not None:
-            reward *= self.reward_scale * self.reward_normalization_factor
+        # if self.reward_scale is not None:
+        #     reward *= self.reward_scale * self.reward_normalization_factor
 
         # Printing results
         if self.print_results:
