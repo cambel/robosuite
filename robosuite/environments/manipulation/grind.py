@@ -343,7 +343,7 @@ class Grind(SingleArmEnv):
             residual_action[3:] = spalg.quaternions_orientation_error(ref_quat, ee_quat)
 
             # add policy action
-            scaled_action = np.interp(action, [-1, 1], [-0.05, 0.05])  # kind of linear mapping to controller.json min max output
+            scaled_action = np.interp(action, [-1, 1], [-0.02, 0.02])  # kind of linear mapping to controller.json min max output
 
             # let z be taken only from the residual action
             scaled_action[2] = 0.0
@@ -449,7 +449,7 @@ class Grind(SingleArmEnv):
 
             # use a shaping reward
             elif self.reward_shaping:
-                ee_pos = self.robots[0].recent_ee_pose.current[:3]  # in absolute, like self.ref_traj
+                ee_pos = self.robots[0].controller.ee_pos[:3] # in absolute, like self.ref_traj
                 try:
                     current_waypoint = self.timestep % self.traj_len
 
