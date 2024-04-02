@@ -17,11 +17,11 @@ DEFAULT_GRIND_CONFIG = {
     # settings for reward
     "task_complete_reward": 50.0,  # reward per task done
     "grind_follow_reward": 1,  # reward for following the trajectory reference
-    "grind_push_reward": 1,  # reward for pushing into the mortar according to te force reference
-    "quickness_reward": 1,  # reward for increased velocity
-    "excess_accel_penalty": 1,  # penalty for end-effector accelerations over threshold
-    "excess_force_penalty": 1,  # penalty for each step that the force is over the safety threshold
-    "exit_task_space_penalty": 1,  # penalty for moving too far away from the mortar task space
+    "grind_push_reward": 0,  # reward for pushing into the mortar according to te force reference
+    "quickness_reward": 0,  # reward for increased velocity
+    "excess_accel_penalty": 0,  # penalty for end-effector accelerations over threshold
+    "excess_force_penalty": 0,  # penalty for each step that the force is over the safety threshold
+    "exit_task_space_penalty": 0,  # penalty for moving too far away from the mortar task space
     "bad_behavior_penalty": -100.0,  # the penalty received in case of early termination due to bad behavior
                                      # meaning one of the conditions from @termination_flag, collisions or joint limits
 
@@ -344,6 +344,9 @@ class Grind(SingleArmEnv):
 
             # add policy action
             scaled_action = np.interp(action, [-1, 1], [-0.05, 0.05])  # kind of linear mapping to controller.json min max output
+
+            # let z be taken only from the residual action
+            scaled_action[2] = 0.0
 
             # save variables during training
             self.timesteps.append(self.timestep)
