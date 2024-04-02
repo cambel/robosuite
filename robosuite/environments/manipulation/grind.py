@@ -205,6 +205,7 @@ class Grind(SingleArmEnv):
         ref_force=None,
         log_dir="",
         evaluate=False,
+        log_details=False,
     ):
 
         # Assert that the gripper type is Grinder
@@ -214,7 +215,7 @@ class Grind(SingleArmEnv):
 
         # Get config
         self.task_config = task_config if task_config is not None else DEFAULT_GRIND_CONFIG
-
+        self.log_details = log_details
         self.horizon = horizon
         # Final reward computation
         self.task_complete_reward = self.task_config["task_complete_reward"]
@@ -295,13 +296,13 @@ class Grind(SingleArmEnv):
         self.task_space_exits = 0
 
         # for step log in npz
-        self.timesteps   = []
-        self.waypoint    = []
-        self.action_in   = []
-        self.res_action  = []
-        self.scl_action  = []
+        self.timesteps = []
+        self.waypoint = []
+        self.action_in = []
+        self.res_action = []
+        self.scl_action = []
         self.current_ref = []
-        self.sum_action  = []
+        self.sum_action = []
         self.current_pos = []
 
         super().__init__(
@@ -348,32 +349,33 @@ class Grind(SingleArmEnv):
             # let z be taken only from the residual action
             scaled_action[2] = 0.0
 
-            # save variables during training
-            self.timesteps.append(self.timestep)
-            self.waypoint.append(current_waypoint)
-            self.action_in.append(action)
-            self.res_action.append(residual_action)
-            self.scl_action.append(scaled_action)
-            self.current_ref.append(self.ref_traj[:,current_waypoint])
-            self.sum_action.append(residual_action + scaled_action)
-            self.current_pos.append(self.robots[0].controller.ee_pos)
+            if self.log_details:
+                # save variables during training
+                self.timesteps.append(self.timestep)
+                self.waypoint.append(current_waypoint)
+                self.action_in.append(action)
+                self.res_action.append(residual_action)
+                self.scl_action.append(scaled_action)
+                self.current_ref.append(self.ref_traj[:, current_waypoint])
+                self.sum_action.append(residual_action + scaled_action)
+                self.current_pos.append(self.robots[0].controller.ee_pos)
 
-            if self.evaluate:
-                log_filename = self.log_dir + "/step_actions_eval.npz"
-            else:
-                log_filename = self.log_dir + "/step_actions.npz"
+                if self.evaluate:
+                    log_filename = self.log_dir + "/step_actions_eval.npz"
+                else:
+                    log_filename = self.log_dir + "/step_actions.npz"
 
-            np.savez(
-                log_filename,
-                timesteps  = self.timesteps,
-                waypoint   = self.waypoint,
-                action_in  = self.action_in,
-                res_action = self.res_action,
-                scl_action = self.scl_action,
-                crnt_ref   = self.current_ref,
-                sum_action = self.sum_action,
-                crnt_pos   = self.current_pos
-            )
+                np.savez(
+                    log_filename,
+                    timesteps=self.timesteps,
+                    waypoint=self.waypoint,
+                    action_in=self.action_in,
+                    res_action=self.res_action,
+                    scl_action=self.scl_action,
+                    crnt_ref=self.current_ref,
+                    sum_action=self.sum_action,
+                    crnt_pos=self.current_pos
+                )
 
             action = residual_action + scaled_action
             return super().step(action)
