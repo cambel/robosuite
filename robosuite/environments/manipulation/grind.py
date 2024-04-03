@@ -16,7 +16,7 @@ from ur_control import spalg
 DEFAULT_GRIND_CONFIG = {
     # settings for reward
     "task_complete_reward": 50.0,  # reward per task done
-    "grind_follow_reward": 1,  # reward for following the trajectory reference
+    "grind_follow_reward": 10,  # reward for following the trajectory reference
     "grind_push_reward": 0,  # reward for pushing into the mortar according to te force reference
     "quickness_reward": 0,  # reward for increased velocity
     "excess_accel_penalty": 0,  # penalty for end-effector accelerations over threshold
@@ -339,10 +339,10 @@ class Grind(SingleArmEnv):
             residual_action = self._compute_relative_distance()
 
             # add policy action
-            scaled_action = np.interp(action, [-1, 1], [-0.02, 0.02])  # kind of linear mapping to controller.json min max output
-
+            scaled_action = np.interp(action, [-1, 1], [-0.05, 0.05])  # kind of linear mapping to controller.json min max output
+            scaled_action[2:] *= 0.0
             # let z be taken only from the residual action
-            scaled_action[2] = 0.0
+            # scaled_action[2] = 0.0
 
             if self.log_details:
                 current_waypoint = self.timestep % self.traj_len
