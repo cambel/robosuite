@@ -206,7 +206,10 @@ class Grind(SingleArmEnv):
         log_dir="",
         evaluate=False,
         log_details=False,
+        action_indices=[0, 1, 2]
     ):
+        # define the specific DOF to be controlling
+        self.action_indices = action_indices
 
         # Assert that the gripper type is Grinder
         assert (
@@ -333,6 +336,8 @@ class Grind(SingleArmEnv):
         )
 
     def step(self, action):
+        assert len(action) == len(self.action_indices), f"Size of action {len(action)} does not match expected {len(self.action_indices)}"
+
         try:
 
             # online tracking of the reference trajectory
@@ -340,7 +345,7 @@ class Grind(SingleArmEnv):
 
             # add policy action
             scaled_action = np.interp(action, [-1, 1], [-0.05, 0.05])  # kind of linear mapping to controller.json min max output
-            scaled_action[2:] *= 0.0
+            # scaled_action[2:] *= 0.0
             # let z be taken only from the residual action
             # scaled_action[2] = 0.0
 
@@ -372,8 +377,8 @@ class Grind(SingleArmEnv):
                     sum_action=self.sum_action,
                     crnt_pos=self.current_pos
                 )
-
-            action = residual_action + scaled_action
+            action = residual_action
+            action[self.action_indices] += scaled_action
             return super().step(action)
         except:
             return super().step(action)
@@ -513,13 +518,13 @@ class Grind(SingleArmEnv):
 
         return reward
 
-    def eef_dist_from_mortar(self,eef_pos):
+    def eef_dist_from_mortar(self, eef_pos):
         # assumes cube is axis aligned and with corners +-self.task_box[0], +-self.task_box[1], +-self.task_box[2]
         x = eef_pos[0]
         y = eef_pos[1]
         z = eef_pos[2]
 
-        dist = np.sqrt( (np.max([0.0, np.abs(x)-self.task_box[0]]))**2 + (np.max([0.0, np.abs(y) - self.task_box[1]]))**2 + (np.max([0.0, np.abs(z) - self.task_box[2]]))**2)
+        dist = np.sqrt((np.max([0.0, np.abs(x)-self.task_box[0]]))**2 + (np.max([0.0, np.abs(y) - self.task_box[1]]))**2 + (np.max([0.0, np.abs(z) - self.task_box[2]]))**2)
         return dist
 
     def _load_model(self):
@@ -794,3 +799,56 @@ class Grind(SingleArmEnv):
                 terminated = True
 
         return terminated
+
+    @property
+    def action_spec(self):
+        """
+        Action space (low, high) for this environment
+
+        Returns:
+            2-tuple:
+
+                - (np.array) minimum (low) action values
+                - (np.array) maximum (high) action values
+        """
+        low, high = [], []
+        for robot in self.robots:
+            lo, hi = robot.action_limits
+            low, high = np.concatenate([low, lo[self.action_indices]]), np.concatenate([high, hi[self.action_indices]])
+        return low, high
+
+    @property
+    def action_dim(self):
+        """
+        Size of the action space
+
+        Returns:
+            int: Action space dimension
+        """
+        return len(self.action_indices)
+
+    def _pre_action(self, action, policy_step=False):
+        """
+        Overrides the superclass method to control the robot(s) within this environment using their respective
+        controllers using the passed actions and gripper control.
+
+        Args:
+            action (np.array): The control to apply to the robot(s). Note that this should be a flat 1D array that
+                encompasses all actions to be distributed to each robot if there are multiple. For each section of the
+                action space assigned to a single robot, the first @self.robots[i].controller.control_dim dimensions
+                should be the desired controller actions and if the robot has a gripper, the next
+                @self.robots[i].gripper.dof dimensions should be actuation controls for the gripper.
+            policy_step (bool): Whether a new policy step (action) is being taken
+
+        Raises:
+            AssertionError: [Invalid action dimension]
+        """
+        # Single robot
+        robot = self.robots[0]
+
+        # Verify that the action is the correct dimension
+        assert len(action) == robot.action_dim, "environment got invalid action dimension -- expected {}, got {}".format(
+            robot.action_dim, len(action)
+        )
+
+        robot.control(action, policy_step=policy_step)
