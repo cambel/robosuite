@@ -385,12 +385,15 @@ class Grind(SingleArmEnv):
 
     def _compute_relative_distance(self):
         relative_distance = np.zeros(6)
-        current_waypoint = self.timestep % self.traj_len
-        relative_distance[:3] = self.ref_traj[:3, current_waypoint] - self.robots[0].controller.ee_pos
-        ee_quat = mat2quat(self.robots[0].controller.ee_ori_mat)
-        ref_quat = axisangle2quat(self.ref_traj[3:, current_waypoint])
-        relative_distance[3:] = spalg.quaternions_orientation_error(ref_quat, ee_quat)
-        return relative_distance
+        if self.ref_traj is not None:
+            current_waypoint = self.timestep % self.traj_len
+            relative_distance[:3] = self.ref_traj[:3, current_waypoint] - self.robots[0].controller.ee_pos
+            ee_quat = mat2quat(self.robots[0].controller.ee_ori_mat)
+            ref_quat = axisangle2quat(self.ref_traj[3:, current_waypoint])
+            relative_distance[3:] = spalg.quaternions_orientation_error(ref_quat, ee_quat)
+            return relative_distance
+        else:
+            return relative_distance
 
     def reward(self, action=None):
         """
@@ -472,8 +475,9 @@ class Grind(SingleArmEnv):
 
                     # Reward for following desired linear trajectory
                     if self.ref_traj is not None:
-                        distance_from_ref_traj = np.linalg.norm(self._compute_relative_distance())
+                        distance_from_ref_traj = np.linalg.norm(self._compute_relative_distance()[:3])
                         reward -= self.grind_follow_reward * distance_from_ref_traj
+                        # print("d", distance_from_ref_traj, reward)
                 except:
                     pass  # situation when no ref given but why would you do that to it
 
@@ -605,10 +609,7 @@ class Grind(SingleArmEnv):
 
         @sensor(modality=f"{pf}proprio")
         def robot0_relative_pose(obs_cache):
-            try:
-                return self._compute_relative_distance()
-            except:
-                pass
+            return self._compute_relative_distance()
 
         # needed in the list of observables
         @sensor(modality=f"{pf}proprio")
