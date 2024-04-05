@@ -605,7 +605,10 @@ class Grind(SingleArmEnv):
 
         @sensor(modality=f"{pf}proprio")
         def robot0_relative_pose(obs_cache):
-            return self._compute_relative_distance()
+            try:
+                return self._compute_relative_distance()
+            except:
+                pass
 
         # needed in the list of observables
         @sensor(modality=f"{pf}proprio")
