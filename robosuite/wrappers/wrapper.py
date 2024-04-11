@@ -68,7 +68,7 @@ class Wrapper:
         Args:
             **kwargs (dict): Any args to pass to environment render function
         """
-        return self.env.render(**kwargs)
+        return self.env.render()
 
     def observation_spec(self):
         """

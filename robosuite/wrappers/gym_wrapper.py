@@ -5,8 +5,8 @@ interface.
 """
 
 import numpy as np
-import gymnasium as gym
-from gymnasium import spaces, Env
+import gym
+from gym import spaces, Env
 
 from robosuite.wrappers import Wrapper
 
@@ -97,7 +97,7 @@ class GymWrapper(Wrapper, gym.Env):
             else:
                 raise TypeError("Seed must be an integer type!")
         ob_dict = self.env.reset()
-        return self._flatten_obs(ob_dict), {}
+        return self._flatten_obs(ob_dict)  # , {} # CB: why?
 
     def step(self, action):
         """
@@ -112,11 +112,14 @@ class GymWrapper(Wrapper, gym.Env):
                 - (np.array) flattened observations from the environment
                 - (float) reward from the environment
                 - (bool) episode ending after reaching an env terminal state
-                - (bool) episode ending after an externally defined condition
+                - (bool) episode ending after an externally defined condition - removed
                 - (dict) misc information
         """
         ob_dict, reward, terminated, info = self.env.step(action)
-        return self._flatten_obs(ob_dict), reward, terminated, False, info
+        if self.env.has_renderer:
+            self.env.render()
+
+        return self._flatten_obs(ob_dict), reward, terminated, info
 
     def compute_reward(self, achieved_goal, desired_goal, info):
         """

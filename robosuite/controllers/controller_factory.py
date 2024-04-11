@@ -12,6 +12,8 @@ from .joint_pos import JointPositionController
 from .joint_tor import JointTorqueController
 from .joint_vel import JointVelocityController
 from .osc import OperationalSpaceController
+from .oscFT import OperationalSpaceControllerFT
+
 
 # Global var for linking pybullet server to multiple ik controller instances if necessary
 pybullet_server = None
@@ -133,6 +135,21 @@ def controller_factory(name, params):
             interpolator.set_states(dim=3)  # EE control uses dim 3 for pos
         params["control_ori"] = False
         return OperationalSpaceController(interpolator_pos=interpolator, **params)
+
+    if name == "OSC_POSE_FT":
+        ori_interpolator = None
+        if interpolator is not None:
+            interpolator.set_states(dim=3)  # EE control uses dim 3 for pos and ori each
+            ori_interpolator = deepcopy(interpolator)
+            ori_interpolator.set_states(ori="euler")
+        params["control_ori"] = True
+        return OperationalSpaceControllerFT(interpolator_pos=interpolator, interpolator_ori=ori_interpolator, **params)
+
+    if name == "OSC_POSITION_FT":
+        if interpolator is not None:
+            interpolator.set_states(dim=3)  # EE control uses dim 3 for pos
+        params["control_ori"] = False
+        return OperationalSpaceControllerFT(interpolator_pos=interpolator, **params)
 
     if name == "IK_POSE":
         ori_interpolator = None
