@@ -101,6 +101,7 @@ class JointPositionController(Controller):
         policy_freq=20,
         qpos_limits=None,
         interpolator=None,
+        control_delta=True,
         **kwargs,  # does nothing; used so no error raised when dict is passed with extra terms used previously
     ):
 
@@ -142,6 +143,8 @@ class JointPositionController(Controller):
         # Impedance mode
         self.impedance_mode = impedance_mode
 
+        self.control_delta = control_delta
+
         # Add to control dim based on impedance_mode
         if self.impedance_mode == "variable":
             self.control_dim *= 3
@@ -182,7 +185,7 @@ class JointPositionController(Controller):
         # Parse action based on the impedance mode, and update kp / kd as necessary
         jnt_dim = len(self.qpos_index)
         if self.impedance_mode == "variable":
-            damping_ratio, kp, delta = action[:jnt_dim], action[jnt_dim : 2 * jnt_dim], action[2 * jnt_dim :]
+            damping_ratio, kp, delta = action[:jnt_dim], action[jnt_dim: 2 * jnt_dim], action[2 * jnt_dim:]
             self.kp = np.clip(kp, self.kp_min, self.kp_max)
             self.kd = 2 * np.sqrt(self.kp) * np.clip(damping_ratio, self.damping_ratio_min, self.damping_ratio_max)
         elif self.impedance_mode == "variable_kp":
@@ -195,10 +198,16 @@ class JointPositionController(Controller):
         # Check to make sure delta is size self.joint_dim
         assert len(delta) == jnt_dim, "Delta qpos must be equal to the robot's joint dimension space!"
 
-        if delta is not None:
-            scaled_delta = self.scale_action(delta)
+        if self.control_delta:
+            if delta is not None:
+                scaled_delta = self.scale_action(delta)
+            else:
+                scaled_delta = None
         else:
-            scaled_delta = None
+            if set_qpos is None:
+                set_qpos = delta
+            # No scaling of values since these are absolute values
+            scaled_delta = delta
 
         self.goal_qpos = set_goal_position(
             scaled_delta, self.joint_pos, position_limit=self.position_limits, set_pos=set_qpos
