@@ -1,1 +1,5 @@
+# Fix possible issue with defusexml's older version
+defusexml==0.7.1
+
+# Install this repo
 -e .
