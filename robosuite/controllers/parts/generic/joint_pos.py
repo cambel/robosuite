@@ -155,6 +155,8 @@ class JointPositionController(Controller):
         # Impedance mode
         self.impedance_mode = impedance_mode
 
+        self.control_delta = control_delta
+
         # Add to control dim based on impedance_mode
         if self.impedance_mode == "variable":
             self.control_dim *= 3
