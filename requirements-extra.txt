@@ -1,5 +1,6 @@
 # required for GymWrapper
 gym
+gymnasium
 
 # macOS only
 hidapi
