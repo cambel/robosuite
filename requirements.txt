@@ -1,5 +1,6 @@
 # Fix possible issue with defusexml's older version
 defusedxml==0.7.1
+PyOpenGL>=3.1.7
 
 # Install this repo
 -e .
