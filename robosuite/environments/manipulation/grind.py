@@ -1,6 +1,5 @@
 import multiprocessing
 import numpy as np
-from scipy.spatial.distance import cdist
 
 from robosuite.environments.manipulation.single_arm_env import SingleArmEnv
 from robosuite.models.arenas import TableArena
@@ -264,6 +263,7 @@ class Grind(SingleArmEnv):
         self.ref_traj = ref_traj
         self.ref_force = ref_force
 
+        self.traj_len = None
         # Assert that if both reference trajectory and reference force are given, they have the same length
         if self.ref_force is np.ndarray and self.ref_traj is np.ndarray:
             assert (
@@ -281,6 +281,11 @@ class Grind(SingleArmEnv):
             assert (
                 self.traj_len <= self.horizon
             ), "Reference trajectory or force cannot be completed in the specified horizon"
+
+        if self.traj_len is not None:
+            print("Environment received at least one type of pre-defined reference")
+        else:
+            print("Continue without the environment access to predefined full reference")
 
         # ee resets
         self.ee_force_bias = np.zeros(3)
@@ -338,8 +343,7 @@ class Grind(SingleArmEnv):
     def step(self, action):
         assert len(action) == len(self.action_indices), f"Size of action {len(action)} does not match expected {len(self.action_indices)}"
 
-        try:
-
+        if self.traj_len is not None:
             # online tracking of the reference trajectory
             residual_action = self._compute_relative_distance()
 
@@ -380,7 +384,7 @@ class Grind(SingleArmEnv):
             action = residual_action
             action[self.action_indices] += scaled_action
             return super().step(action)
-        except:
+        else:
             return super().step(action)
 
     def _compute_relative_distance(self):
@@ -477,7 +481,6 @@ class Grind(SingleArmEnv):
                     if self.ref_traj is not None:
                         distance_from_ref_traj = np.linalg.norm(self._compute_relative_distance()[:3])
                         reward -= self.grind_follow_reward * distance_from_ref_traj
-                        # print("d", distance_from_ref_traj, reward)
                 except:
                     pass  # situation when no ref given but why would you do that to it
 
