@@ -399,6 +399,15 @@ class Grind(SingleArmEnv):
         else:
             return relative_distance
 
+    def _compute_relative_wrenches(self):
+        relative_wrench = np.zeros(6)
+        if self.ref_force is not None:
+            current_waypoint = self.timestep % self.traj_len
+            relative_wrench = self.ref_force[:, current_waypoint] - self.robots[0].controller.ee_ft.current  # ee_ft from controller already filtered
+            return relative_wrench
+        else:
+            return relative_wrench
+
     def reward(self, action=None):
         """
         Reward function for the task.
@@ -614,6 +623,10 @@ class Grind(SingleArmEnv):
         def robot0_relative_pose(obs_cache):
             return self._compute_relative_distance()
 
+        @sensor(modality=f"{pf}proprio")
+        def robot0_relative_wrench(obs_cache):
+            return self._compute_relative_wrenches()
+
         # needed in the list of observables
         @sensor(modality=f"{pf}proprio")
         def robot0_eef_force(obs_cache):
@@ -650,7 +663,7 @@ class Grind(SingleArmEnv):
                     else np.zeros(3)
                 )
 
-            sensors = [mortar_pos, mortar_quat, gripper_to_mortar_pos, robot0_eef_force, robot0_eef_torque, robot0_relative_pose]
+            sensors = [mortar_pos, mortar_quat, gripper_to_mortar_pos, robot0_eef_force, robot0_eef_torque, robot0_relative_pose, robot0_relative_wrench]
             names = [s.__name__ for s in sensors]
 
             # Create observables
