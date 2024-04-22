@@ -15,8 +15,8 @@ from ur_control import spalg
 DEFAULT_GRIND_CONFIG = {
     # settings for reward
     "task_complete_reward": 50.0,  # reward per task done
-    "grind_follow_reward": 10,  # reward for following the trajectory reference
-    "grind_push_reward": 0,  # reward for pushing into the mortar according to te force reference
+    "grind_follow_reward": 5,  # reward for following the trajectory reference
+    "grind_push_reward": 5,  # reward for pushing into the mortar according to te force reference
     "quickness_reward": 0,  # reward for increased velocity
     "excess_accel_penalty": 0,  # penalty for end-effector accelerations over threshold
     "excess_force_penalty": 0,  # penalty for each step that the force is over the safety threshold
@@ -349,9 +349,6 @@ class Grind(SingleArmEnv):
 
             # add policy action
             scaled_action = np.interp(action, [-1, 1], [-0.05, 0.05])  # kind of linear mapping to controller.json min max output
-            # scaled_action[2:] *= 0.0
-            # let z be taken only from the residual action
-            # scaled_action[2] = 0.0
 
             if self.log_details:
                 current_waypoint = self.timestep % self.traj_len
@@ -481,10 +478,9 @@ class Grind(SingleArmEnv):
                     current_waypoint = self.timestep % self.traj_len
 
                     # Reward for pushing into mortar with desired linear forces
-                    # if self.ref_force is not None:
-                    #     ee_ft = self.robots[0].controller.ee_ft.current[:3]
-                    #     distance_from_ref_force = np.linalg.norm(self.ref_force[:3, current_waypoint] - ee_ft)
-                    #     reward -= self.grind_push_reward * distance_from_ref_force
+                    if self.ref_force is not None:
+                        distance_from_ref_force = np.linalg.norm(self._compute_relative_wrenches()[:3])
+                        reward -= self.grind_push_reward * distance_from_ref_force
 
                     # Reward for following desired linear trajectory
                     if self.ref_traj is not None:
