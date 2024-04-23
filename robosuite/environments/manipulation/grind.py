@@ -378,7 +378,7 @@ class Grind(SingleArmEnv):
                     sum_action=self.sum_action,
                     crnt_pos=self.current_pos
                 )
-            action = residual_action
+            action = np.copy(residual_action)
             action[self.action_indices] += scaled_action
             return super().step(action)
         else:
