@@ -15,8 +15,8 @@ from ur_control import spalg
 DEFAULT_GRIND_CONFIG = {
     # settings for reward
     "task_complete_reward": 50.0,  # reward per task done
-    "grind_follow_reward": 5,  # reward for following the trajectory reference
-    "grind_push_reward": 5,  # reward for pushing into the mortar according to te force reference
+    "grind_follow_reward": 5.0,  # reward for following the trajectory reference
+    "grind_push_reward": 5.0,  # reward for pushing into the mortar according to te force reference
     "quickness_reward": 0,  # reward for increased velocity
     "excess_accel_penalty": 0,  # penalty for end-effector accelerations over threshold
     "excess_force_penalty": 0,  # penalty for each step that the force is over the safety threshold
@@ -312,6 +312,9 @@ class Grind(SingleArmEnv):
         self.current_ref = []
         self.sum_action = []
         self.current_pos = []
+        self.current_force_ref = []
+        self.current_force = []
+
 
         super().__init__(
             robots=robots,
@@ -359,8 +362,13 @@ class Grind(SingleArmEnv):
                 self.res_action.append(residual_action)
                 self.scl_action.append(scaled_action)
                 self.current_ref.append(self.ref_traj[:, current_waypoint])
-                self.sum_action.append(residual_action + scaled_action)
+                self.sum_action.append(residual_action[:3] + scaled_action)
                 self.current_pos.append(self.robots[0].controller.ee_pos)
+
+                if self.ref_force is not None:
+                    self.current_force_ref.append(self.ref_force[:3, current_waypoint])
+                    self.current_force.append(self.robots[0].controller.ee_ft.current[:3])
+
 
                 if self.evaluate:
                     log_filename = self.log_dir + "/step_actions_eval.npz"
@@ -376,8 +384,12 @@ class Grind(SingleArmEnv):
                     scl_action=self.scl_action,
                     crnt_ref=self.current_ref,
                     sum_action=self.sum_action,
-                    crnt_pos=self.current_pos
+                    crnt_pos=self.current_pos,
+                    crnt_f_ref=self.current_force_ref,
+                    crnt_f=self.current_force
                 )
+
+  
             action = np.copy(residual_action)
             action[self.action_indices] += scaled_action
             return super().step(action)
@@ -548,7 +560,8 @@ class Grind(SingleArmEnv):
         # Adjust base pose accordingly
         xpos = self.robots[0].robot_model.base_xpos_offset["table"](self.table_full_size[0])
         self.robots[0].robot_model.set_base_xpos(xpos)
-        self.robots[0].init_qpos = np.array([-0.242, -0.867, 1.993, -2.697, -1.571, -1.812])
+        #self.robots[0].init_qpos = np.array([-0.242, -0.867, 1.993, -2.697, -1.571, -1.812])
+        self.robots[0].init_qpos = np.array([-0.231, -0.836, 1.914, -2.649, -1.571, -1.802])
 
         # load model for table top workspace
         mujoco_arena = TableArena(
