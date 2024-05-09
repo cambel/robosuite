@@ -198,7 +198,7 @@ if __name__ == "__main__":
 
             # Get the newest action
             action, grasp = input2action(
-                device=device, robot=active_robot, active_arm=args.arm, env_configuration=args.config
+                device=device, robot=active_robot, active_arm=args.arm, env_configuration=args.config, control_delta=True
             )
 
             # If action is none, then this a reset so we should break
