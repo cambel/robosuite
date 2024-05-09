@@ -173,7 +173,7 @@ class Grind(SingleArmEnv):
         robots,
         env_configuration="default",
         controller_configs=None,
-        gripper_types="default",
+        gripper_types="Grinder",
         initialization_noise="default",
         table_full_size=(0.8, 0.8, 0.05),
         table_friction=(1.0, 5e-3, 1e-4),
@@ -205,7 +205,7 @@ class Grind(SingleArmEnv):
         log_dir="",
         evaluate=False,
         log_details=False,
-        action_indices=[0, 1, 2]
+        action_indices=range(0,6)
     ):
         # define the specific DOF to be controlling
         self.action_indices = action_indices
