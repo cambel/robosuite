@@ -397,7 +397,6 @@ class OperationalSpaceControllerFT(Controller):
 
         # filter ft measurements
         filtered_wrench = self.butterworth_filter(self.ee_ft, self.current_wrench, 2)
-        # filtered_wrench = self.current_wrench
 
         self.ee_ft.push(filtered_wrench)
         force_error = self.FT_reference - self.ee_ft.current
@@ -411,7 +410,7 @@ class OperationalSpaceControllerFT(Controller):
         desired_torque = np.dot(ori_error, orientation_kp) + np.multiply(vel_ori_error, self.kd[3:6])
 
         # TODO clip forces
-        F_active = self.PID(error=force_error, kp=self.kp_force, ki=self.ki_force, kd=np.zeros(6))  # + self.FT_reference
+        F_active = self.PID(error=force_error, kp=self.kp_force, ki=self.ki_force, kd=np.zeros(6))
         self.F_active.push(F_active)
 
         # Compute nullspace matrix (I - Jbar * J) and lambda matrices ((J * M^-1 * J^T)^-1)
