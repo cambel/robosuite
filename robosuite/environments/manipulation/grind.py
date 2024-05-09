@@ -9,6 +9,8 @@ from robosuite.utils.observables import Observable, sensor
 from robosuite.utils.placement_samplers import UniformRandomSampler
 from robosuite.utils.transform_utils import axisangle2quat, convert_quat, mat2quat
 from ur_control import spalg
+import rospkg
+import json
 
 
 # Default Grind environment configuration
@@ -560,8 +562,13 @@ class Grind(SingleArmEnv):
         # Adjust base pose accordingly
         xpos = self.robots[0].robot_model.base_xpos_offset["table"](self.table_full_size[0])
         self.robots[0].robot_model.set_base_xpos(xpos)
-        #self.robots[0].init_qpos = np.array([-0.242, -0.867, 1.993, -2.697, -1.571, -1.812])
-        self.robots[0].init_qpos = np.array([-0.231, -0.836, 1.914, -2.649, -1.571, -1.802])
+
+        # (For UR5e) specific starting point
+        if self.robots[0].name == "UR5e":
+            ros_pack = rospkg.RosPack()
+            qpos_init_file = ros_pack.get_path("osx_powder_grinding") + "/config/ur5e_init_qpos.json"
+            init_joints = json.load(open(qpos_init_file))["init_q"]
+            self.robots[0].init_qpos = np.array(init_joints)
 
         # load model for table top workspace
         mujoco_arena = TableArena(
