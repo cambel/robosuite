@@ -125,8 +125,10 @@ if __name__ == "__main__":
         controller_name = "IK_POSE"
     elif args.controller == "osc":
         controller_name = "OSC_POSE"
+    elif args.controller == "oscft":
+        controller_name = "OSC_POSE_FT"
     else:
-        print("Error: Unsupported controller specified. Must be either 'ik' or 'osc'!")
+        print("Error: Unsupported controller specified. Must be either 'ik' 'osc 'or 'oscft'!")
         raise ValueError
 
     # Get controller config
@@ -138,6 +140,18 @@ if __name__ == "__main__":
         "robots": args.robots,
         "controller_configs": controller_config,
     }
+
+    # Make sure grind environment works with ur5e
+    if args.environment == "Grind":
+        if not args.robots[0] == "UR5e":
+            print("Error: Currently unsupported robot for the Grind environment, must be UR5e")
+            raise ValueError
+        if len(args.robots) > 1:
+            print("Error: Currently unsupported multiple robots for the Grind environment, must be single")
+            raise ValueError
+        if not controller_name == "OSC_POSE_FT":
+            print("Error: Currently unsupported controller for the Grind environment, must be OSC_POSE_FT")
+            raise ValueError
 
     # Check if we're using a multi-armed environment and use env_configuration argument if so
     if "TwoArm" in args.environment:
