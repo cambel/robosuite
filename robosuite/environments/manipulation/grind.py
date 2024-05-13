@@ -17,14 +17,16 @@ import json
 DEFAULT_GRIND_CONFIG = {
     # settings for reward
     "task_complete_reward": 50.0,  # reward per task done
-    "grind_follow_reward": 5.0,  # reward for following the trajectory reference
-    "grind_push_reward": 5.0,  # reward for pushing into the mortar according to te force reference
+    "grind_follow_reward": 0.0010209280396414132,  # reward for following the trajectory reference
+    "grind_push_reward": 0.10209280396414132,  # reward for pushing into the mortar according to te force reference
     "quickness_reward": 0,  # reward for increased velocity
     "excess_accel_penalty": 0,  # penalty for end-effector accelerations over threshold
     "excess_force_penalty": 0,  # penalty for each step that the force is over the safety threshold
     "exit_task_space_penalty": 0,  # penalty for moving too far away from the mortar task space
     "bad_behavior_penalty": -100.0,  # the penalty received in case of early termination due to bad behavior
                                      # meaning one of the conditions from @termination_flag, collisions or joint limits
+    "force_follow_normalization": 50.0,  # max load (N)
+    "traj_follow_normalization": [0.027, 0.027, 0.085, 1, 1, 1],  # traj max? penalty?
 
     # settings for thresholds and flags
     "pressure_threshold_max": 20.0,  # maximum eef force allowed (N)
@@ -228,6 +230,8 @@ class Grind(SingleArmEnv):
         self.reward_shaping = reward_shaping
         # Normalization factor = theoretical best episode return
         self.reward_normalization_factor = 1.0 / self.task_complete_reward
+        self.force_follow_normalization = self.task_config["force_follow_normalization"]
+        self.traj_follow_normalization = self.task_config["traj_follow_normalization"]
 
         self.grind_follow_reward = self.task_config["grind_follow_reward"]
         self.grind_push_reward = self.task_config["grind_push_reward"]
@@ -316,6 +320,8 @@ class Grind(SingleArmEnv):
         self.current_pos = []
         self.current_force_ref = []
         self.current_force = []
+        self.force_reward = []
+        self.position_reward = []
 
 
         super().__init__(
@@ -388,10 +394,11 @@ class Grind(SingleArmEnv):
                     sum_action=self.sum_action,
                     crnt_pos=self.current_pos,
                     crnt_f_ref=self.current_force_ref,
-                    crnt_f=self.current_force
+                    crnt_f=self.current_force,
+                    f_rew=self.force_reward,
+                    p_rew=self.position_reward
                 )
 
-  
             action = np.copy(residual_action)
             action[self.action_indices] += scaled_action
             return super().step(action)
@@ -414,7 +421,7 @@ class Grind(SingleArmEnv):
         relative_wrench = np.zeros(6)
         if self.ref_force is not None:
             current_waypoint = self.timestep % self.traj_len
-            relative_wrench = self.ref_force[:, current_waypoint] - self.robots[0].controller.ee_ft.current  # ee_ft from controller already filtered
+            relative_wrench = (self.ref_force[:, current_waypoint] - self.robots[0].controller.ee_ft.current)/self.force_follow_normalization  # normalized by max load; ee_ft from controller already filtered
             return relative_wrench
         else:
             return relative_wrench
@@ -495,13 +502,17 @@ class Grind(SingleArmEnv):
                     if self.ref_force is not None:
                         distance_from_ref_force = np.linalg.norm(self._compute_relative_wrenches()[:3])
                         reward -= self.grind_push_reward * distance_from_ref_force
+                        self.force_reward.append(- self.grind_push_reward * distance_from_ref_force)
 
                     # Reward for following desired linear trajectory
                     if self.ref_traj is not None:
-                        distance_from_ref_traj = np.linalg.norm(self._compute_relative_distance()[:3])
+                        distance_from_ref_traj = self._compute_relative_distance()[:3]/self.traj_follow_normalization[:3] # normalize
+                        distance_from_ref_traj = np.linalg.norm(distance_from_ref_traj)
                         reward -= self.grind_follow_reward * distance_from_ref_traj
+                        self.position_reward.append(- self.grind_follow_reward * distance_from_ref_traj)
+
                 except:
-                    pass  # situation when no ref given but why would you do that to it
+                    pass  # situation when no full pre-defined ref given
 
                 # # Reward for increased linear velocity
                 # reward += self.quickness_reward * np.mean(abs(self.robots[0].recent_ee_vel.current[:3]))
@@ -637,7 +648,7 @@ class Grind(SingleArmEnv):
 
         @sensor(modality=f"{pf}proprio")
         def robot0_relative_pose(obs_cache):
-            return self._compute_relative_distance()
+            return self._compute_relative_distance()/self.traj_follow_normalization
 
         @sensor(modality=f"{pf}proprio")
         def robot0_relative_wrench(obs_cache):
