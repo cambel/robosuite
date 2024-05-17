@@ -17,8 +17,8 @@ import json
 DEFAULT_GRIND_CONFIG = {
     # settings for reward
     "task_complete_reward": 50.0,  # reward per task done
-    "grind_follow_reward": 0.0010209280396414132,  # reward for following the trajectory reference
-    "grind_push_reward": 0.10209280396414132,  # reward for pushing into the mortar according to te force reference
+    "grind_follow_reward": 0.0025830969585508424,  # reward for following the trajectory reference
+    "grind_push_reward": 0.25830969585508424,  # reward for pushing into the mortar according to te force reference
     "quickness_reward": 0,  # reward for increased velocity
     "excess_accel_penalty": 0,  # penalty for end-effector accelerations over threshold
     "excess_force_penalty": 0,  # penalty for each step that the force is over the safety threshold
@@ -231,7 +231,7 @@ class Grind(SingleArmEnv):
         # Normalization factor = theoretical best episode return
         self.reward_normalization_factor = 1.0 / self.task_complete_reward
         self.force_follow_normalization = self.task_config["force_follow_normalization"]
-        self.traj_follow_normalization = self.task_config["traj_follow_normalization"]
+        self.traj_follow_normalization = np.array(self.task_config["traj_follow_normalization"])
 
         self.grind_follow_reward = self.task_config["grind_follow_reward"]
         self.grind_push_reward = self.task_config["grind_push_reward"]
@@ -370,7 +370,7 @@ class Grind(SingleArmEnv):
                 self.res_action.append(residual_action)
                 self.scl_action.append(scaled_action)
                 self.current_ref.append(self.ref_traj[:, current_waypoint])
-                self.sum_action.append(residual_action[:3] + scaled_action)
+                self.sum_action.append(residual_action[self.action_indices] + scaled_action)
                 self.current_pos.append(self.robots[0].controller.ee_pos)
 
                 if self.ref_force is not None:
@@ -401,6 +401,7 @@ class Grind(SingleArmEnv):
 
             action = np.copy(residual_action)
             action[self.action_indices] += scaled_action
+
             return super().step(action)
         else:
             return super().step(action)
@@ -500,16 +501,16 @@ class Grind(SingleArmEnv):
 
                     # Reward for pushing into mortar with desired linear forces
                     if self.ref_force is not None:
-                        distance_from_ref_force = np.linalg.norm(self._compute_relative_wrenches()[:3])
+                        distance_from_ref_force = np.linalg.norm(self._compute_relative_wrenches()[self.action_indices])
                         reward -= self.grind_push_reward * distance_from_ref_force
-                        self.force_reward.append(- self.grind_push_reward * distance_from_ref_force)
+                        self.force_reward.append(- self.grind_push_reward )
 
                     # Reward for following desired linear trajectory
                     if self.ref_traj is not None:
-                        distance_from_ref_traj = self._compute_relative_distance()[:3]/self.traj_follow_normalization[:3] # normalize
+                        distance_from_ref_traj = self._compute_relative_distance()[self.action_indices]/self.traj_follow_normalization[self.action_indices] # normalize
                         distance_from_ref_traj = np.linalg.norm(distance_from_ref_traj)
                         reward -= self.grind_follow_reward * distance_from_ref_traj
-                        self.position_reward.append(- self.grind_follow_reward * distance_from_ref_traj)
+                        self.position_reward.append(-self.grind_follow_reward * distance_from_ref_traj)
 
                 except:
                     pass  # situation when no full pre-defined ref given
