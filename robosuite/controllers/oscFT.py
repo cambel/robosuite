@@ -143,7 +143,7 @@ class OperationalSpaceControllerFT(Controller):
         uncouple_pos_ori=True,
         ft_ref_flag=True,
         ft_limits=(0, 20),
-        force_active_case="no-action",
+        force_active_case="position",
         kp_force=np.array([10., 10., 10., 10., 10., 10.]),
         ki_force=np.array([1., 1., 1., 1., 1., 1.]),
         **kwargs,  # does nothing; used so no error raised when dict is passed with extra terms used previously
@@ -240,8 +240,10 @@ class OperationalSpaceControllerFT(Controller):
 
         self.kp_force = kp_force
         self.ki_force = ki_force
+
         # Default to position control
         self.selection_matrix = np.eye(6)
+        self.selection_matrix /= 2.0
 
     def set_goal(self, action, set_pos=None, set_ori=None):
         """
