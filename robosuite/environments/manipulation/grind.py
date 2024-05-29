@@ -209,7 +209,7 @@ class Grind(SingleArmEnv):
         log_dir="",
         evaluate=False,
         log_details=False,
-        action_indices=range(0,6)
+        action_indices=range(0, 6)
     ):
         # define the specific DOF to be controlling
         self.action_indices = action_indices
@@ -323,7 +323,6 @@ class Grind(SingleArmEnv):
         self.force_reward = []
         self.position_reward = []
 
-
         super().__init__(
             robots=robots,
             env_configuration=env_configuration,
@@ -369,14 +368,13 @@ class Grind(SingleArmEnv):
                 self.action_in.append(action)
                 self.res_action.append(residual_action)
                 self.scl_action.append(scaled_action)
-                self.current_ref.append(self.ref_traj[:, current_waypoint])
+                self.current_ref.append(self.ref_traj[current_waypoint, :])
                 self.sum_action.append(residual_action[self.action_indices] + scaled_action)
                 self.current_pos.append(self.robots[0].controller.ee_pos)
 
                 if self.ref_force is not None:
                     self.current_force_ref.append(self.ref_force[:3, current_waypoint])
                     self.current_force.append(self.robots[0].controller.ee_ft.current[:3])
-
 
                 if self.evaluate:
                     log_filename = self.log_dir + "/step_actions_eval.npz"
@@ -410,10 +408,9 @@ class Grind(SingleArmEnv):
         relative_distance = np.zeros(6)
         if self.ref_traj is not None:
             current_waypoint = self.timestep % self.traj_len
-            relative_distance[:3] = self.ref_traj[:3, current_waypoint] - self.robots[0].controller.ee_pos
-            ee_quat = mat2quat(self.robots[0].controller.ee_ori_mat)
-            ref_quat = axisangle2quat(self.ref_traj[3:, current_waypoint])
-            relative_distance[3:] = spalg.quaternions_orientation_error(ref_quat, ee_quat)
+            relative_distance[:3] = self.ref_traj[current_waypoint, :3] - self._eef_xpos
+            ref_quat = self.ref_traj[current_waypoint, 3:]
+            relative_distance[3:] = spalg.quaternions_orientation_error(ref_quat, self._eef_xquat)
             return relative_distance
         else:
             return relative_distance
@@ -422,7 +419,8 @@ class Grind(SingleArmEnv):
         relative_wrench = np.zeros(6)
         if self.ref_force is not None:
             current_waypoint = self.timestep % self.traj_len
-            relative_wrench = (self.ref_force[:, current_waypoint] - self.robots[0].controller.ee_ft.current)/self.force_follow_normalization  # normalized by max load; ee_ft from controller already filtered
+            # normalized by max load; ee_ft from controller already filtered
+            relative_wrench = (self.ref_force[:, current_waypoint] - self.robots[0].controller.ee_ft.current)/self.force_follow_normalization
             return relative_wrench
         else:
             return relative_wrench
@@ -503,11 +501,11 @@ class Grind(SingleArmEnv):
                     if self.ref_force is not None:
                         distance_from_ref_force = np.linalg.norm(self._compute_relative_wrenches()[self.action_indices])
                         reward -= self.grind_push_reward * distance_from_ref_force
-                        self.force_reward.append(- self.grind_push_reward )
+                        self.force_reward.append(- self.grind_push_reward)
 
                     # Reward for following desired linear trajectory
                     if self.ref_traj is not None:
-                        distance_from_ref_traj = self._compute_relative_distance()[self.action_indices]/self.traj_follow_normalization[self.action_indices] # normalize
+                        distance_from_ref_traj = self._compute_relative_distance()[self.action_indices]/self.traj_follow_normalization[self.action_indices]  # normalize
                         distance_from_ref_traj = np.linalg.norm(distance_from_ref_traj)
                         reward -= self.grind_follow_reward * distance_from_ref_traj
                         self.position_reward.append(-self.grind_follow_reward * distance_from_ref_traj)
