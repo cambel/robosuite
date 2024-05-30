@@ -511,11 +511,12 @@ class OperationalSpaceControllerFT(Controller):
             low = np.concatenate([self.kp_min, self.input_min])
             high = np.concatenate([self.kp_max, self.input_max])
         else:  # This is case "fixed"
-            if self.ft_ref_flag == True:
-                low = np.concatenate([self.ft_min, self.input_min])
-                high = np.concatenate([self.ft_max, self.input_max])
-            else:
-                low, high = self.input_min, self.input_max
+            low, high = self.input_min, self.input_max
+
+        if self.ft_ref_flag == True:
+            low = np.concatenate([low, self.ft_min])
+            high = np.concatenate([high, self.ft_max])
+
         return low, high
 
     @property
