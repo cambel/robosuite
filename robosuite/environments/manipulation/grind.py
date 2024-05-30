@@ -368,7 +368,7 @@ class Grind(SingleArmEnv):
                 self.action_in.append(action)
                 self.res_action.append(residual_action)
                 self.scl_action.append(scaled_action)
-                self.current_ref.append(self.ref_traj[current_waypoint, :])
+                self.current_ref.append(self.ref_traj[current_waypoint])
                 self.sum_action.append(residual_action[self.action_indices] + scaled_action)
                 self.current_pos.append(self.robots[0].controller.ee_pos)
 
@@ -408,8 +408,8 @@ class Grind(SingleArmEnv):
         relative_distance = np.zeros(6)
         if self.ref_traj is not None:
             current_waypoint = self.timestep % self.traj_len
-            relative_distance[:3] = self.ref_traj[current_waypoint, :3] - self._eef_xpos
-            ref_quat = self.ref_traj[current_waypoint, 3:]
+            relative_distance[:3] = self.ref_traj[current_waypoint][:3] - self._eef_xpos
+            ref_quat = self.ref_traj[current_waypoint][3:]
             relative_distance[3:] = spalg.quaternions_orientation_error(ref_quat, self._eef_xquat)
             return relative_distance
         else:
@@ -501,7 +501,7 @@ class Grind(SingleArmEnv):
                     if self.ref_force is not None:
                         distance_from_ref_force = np.linalg.norm(self._compute_relative_wrenches()[self.action_indices])
                         reward -= self.grind_push_reward * distance_from_ref_force
-                        self.force_reward.append(- self.grind_push_reward)
+                        self.force_reward.append(- self.grind_push_reward * distance_from_ref_force)
 
                     # Reward for following desired linear trajectory
                     if self.ref_traj is not None:
