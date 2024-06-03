@@ -265,13 +265,19 @@ class OperationalSpaceControllerFT(Controller):
         # Update state
         self.update()
 
-        # Parse action based on the impedance mode, and update kp / kd as necessary
+        # Parse action based on the impedance mode, and update kp / kd as necessary TODO make this cleaner
         if self.impedance_mode == "variable":
-            damping_ratio, kp, delta = action[:6], action[6:12], action[12:]
+            if self.ft_ref_flag is True:
+                damping_ratio, kp, delta, self.FT_reference = action[:6], action[6:12], action[12:18], action[18:]
+            else:
+                damping_ratio, kp, delta = action[:6], action[6:12], action[12:]
             self.kp = np.clip(kp, self.kp_min, self.kp_max)
             self.kd = 2 * np.sqrt(self.kp) * np.clip(damping_ratio, self.damping_ratio_min, self.damping_ratio_max)
         elif self.impedance_mode == "variable_kp":
-            kp, delta = action[:6], action[6:]
+            if self.ft_ref_flag is True:
+                kp, delta, self.FT_reference = action[:6], action[6:12], action[12:]
+            else:
+                kp, delta = action[:6], action[6:]
             self.kp = np.clip(kp, self.kp_min, self.kp_max)
             self.kd = 2 * np.sqrt(self.kp)  # critically damped
         elif self.impedance_mode == "variable_full_kp":
