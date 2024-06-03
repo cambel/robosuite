@@ -11,7 +11,7 @@ from robosuite.utils.transform_utils import axisangle2quat, convert_quat, mat2qu
 from ur_control import spalg
 import rospkg
 import json
-
+import copy
 
 # Default Grind environment configuration
 DEFAULT_GRIND_CONFIG = {
@@ -211,8 +211,6 @@ class Grind(SingleArmEnv):
         log_details=False,
         action_indices=range(0, 6)
     ):
-        # define the specific DOF to be controlling
-        self.action_indices = action_indices
 
         # Assert that the gripper type is Grinder
         assert (
@@ -350,18 +348,59 @@ class Grind(SingleArmEnv):
             renderer_config=renderer_config,
         )
 
+        # define the specific DOF to be controlling TODO make this cleaner
+        # self.action_indices is based on action_indices param (these mention which of the 6 axes we're interested in adding the agent on)
+        # self.action indices is however changes based on the dimension (if any) of the variable impedance actions, which come first in the list of actions
+        # self.full_indices_actions contain the variable impedance indices(if any) together with the position action indices and with the force action indices at the end (if any)
+
+        if self.robots[0].controller.impedance_mode == "fixed":
+            self.contr_impedance_index = 0
+            self.action_indices = action_indices
+            self.full_action_indices = copy.deepcopy(action_indices)
+        elif self.robots[0].controller.impedance_mode == "variable":
+            self.contr_impedance_index = 12
+        elif self.robots[0].controller.impedance_mode == "variable_kp":
+            self.contr_impedance_index = 6
+
+        self.action_indices = [self.contr_impedance_index+item for item in action_indices]
+        self.full_action_indices = list(range(self.contr_impedance_index)) + self.action_indices
+
+        # if we want to send force as actions to the controller, they are always at the end of the action list
+        if self.robots[0].controller.ft_ref_flag == True:
+            self.full_action_indices += [self.action_indices[-1] + 1 + item for item in list(range(6))]
+            self.contr_force_index = 6
+        else:
+            self.contr_force_index = 0
+
+        print("action indices ",self.action_indices)
+        print("full action indices ",self.full_action_indices)
+
+
     def step(self, action):
-        assert len(action) == len(self.action_indices), f"Size of action {len(action)} does not match expected {len(self.action_indices)}"
+        assert len(action) == len(self.action_indices)+self.contr_force_index+self.contr_impedance_index, f"Size of action {len(action)} does not match expected {len(self.action_indices)+self.contr_force_index+self.contr_impedance_index}"
 
         if self.traj_len is not None:
+
+            current_waypoint = self.timestep % self.traj_len
+
             # online tracking of the reference trajectory
             residual_action = self._compute_relative_distance()
 
             # add policy action
-            scaled_action = np.interp(action, [-1, 1], [-0.05, 0.05])  # kind of linear mapping to controller.json min max output
+            scaled_action = np.zeros(self.contr_impedance_index+6)
+
+            # add policy action (depending on the impedance mode) TODO make cleaner
+            if self.robots[0].controller.impedance_mode == "fixed":
+                scaled_action = np.interp(action, [-1, 1], [-0.05, 0.05])  # kind of linear mapping to controller.json min max output
+            elif self.robots[0].controller.impedance_mode == "variable_kp":
+                scaled_action[:6] = np.interp(action[:6], [-1, 1], [10, 2000])  # kind of linear mapping to controller.json min max output
+                scaled_action[self.action_indices] = np.interp(action[self.action_indices], [-1, 1], [-0.05, 0.05])  # kind of linear mapping to controller.json min max gain
+            elif self.robots[0].controller.impedance_mode == "variable":
+                scaled_action[:6] = np.interp(action[:6], [-1, 1], [0, 10])  # kind of linear mapping to controller.json min max damping
+                scaled_action[6:12] = np.interp(action[6:12], [-1, 1], [10, 2000])  # kind of linear mapping to controller.json min max gain
+                scaled_action[self.action_indices] = np.interp(action[self.action_indices], [-1, 1], [-0.05, 0.05])  # kind of linear mapping to controller.json min max output
 
             if self.log_details:
-                current_waypoint = self.timestep % self.traj_len
                 # save variables during training
                 self.timesteps.append(self.timestep)
                 self.waypoint.append(current_waypoint)
@@ -369,7 +408,6 @@ class Grind(SingleArmEnv):
                 self.res_action.append(residual_action)
                 self.scl_action.append(scaled_action)
                 self.current_ref.append(self.ref_traj[current_waypoint])
-                self.sum_action.append(residual_action[self.action_indices] + scaled_action)
                 self.current_pos.append(self.robots[0].controller.ee_pos)
 
                 if self.ref_force is not None:
@@ -389,7 +427,6 @@ class Grind(SingleArmEnv):
                     res_action=self.res_action,
                     scl_action=self.scl_action,
                     crnt_ref=self.current_ref,
-                    sum_action=self.sum_action,
                     crnt_pos=self.current_pos,
                     crnt_f_ref=self.current_force_ref,
                     crnt_f=self.current_force,
@@ -397,8 +434,28 @@ class Grind(SingleArmEnv):
                     p_rew=self.position_reward
                 )
 
-            action = np.copy(residual_action)
-            action[self.action_indices] += scaled_action
+            # TODO create the action in a cleaner fashion
+
+            # in case of var imp, concatenate the scaled before the position part
+            if self.contr_impedance_index != 0:
+                print("contr imp index", self.contr_impedance_index)
+                print("scaled", scaled_action)
+                print("scaled to concatenate", scaled_action[:self.contr_impedance_index])
+                print("residual to b conc", copy.deepcopy(residual_action))
+                action = np.concatenate([scaled_action[:self.contr_impedance_index], copy.deepcopy(residual_action)])
+            else:
+                action = copy.deepcopy(residual_action)
+
+            print("in step action indices", self.action_indices)
+            print("in step residual action", action)
+            print("in step scaled", scaled_action)
+
+            # Adding the agent policy action
+            action[self.action_indices] += scaled_action[self.action_indices]
+
+            # give the controller the force reference for the current timestep TODO make it more general, to work in the case of not knowing the full force ref beforehand?
+            if self.robots[0].controller.ft_ref_flag == True:
+                action = np.concatenate([action, self.ref_force[:,current_waypoint]])
 
             return super().step(action)
         else:
@@ -858,9 +915,11 @@ class Grind(SingleArmEnv):
                 - (np.array) maximum (high) action values
         """
         low, high = [], []
+        print("robot action limits", self.robots[0].action_limits)
+
         for robot in self.robots:
             lo, hi = robot.action_limits
-            low, high = np.concatenate([low, lo[self.action_indices]]), np.concatenate([high, hi[self.action_indices]])
+            low, high = np.concatenate([low, lo[self.full_action_indices]]), np.concatenate([high, hi[self.full_action_indices]])
         return low, high
 
     @property
