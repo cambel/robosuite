@@ -17,6 +17,7 @@ from robosuite.environments.manipulation.two_arm_wiping import TwoArmWiping
 from robosuite.environments.manipulation.two_arm_wiping_diff import TwoArmWipingDiff
 from robosuite.environments.manipulation.grind import Grind
 from robosuite.environments.manipulation.osx_grind import OSXGrind
+from robosuite.environments.manipulation.two_arm_wiping_diff import TwoArmWipingDiff
 
 from robosuite.environments import ALL_ENVIRONMENTS
 from robosuite.controllers import ALL_CONTROLLERS, load_controller_config
