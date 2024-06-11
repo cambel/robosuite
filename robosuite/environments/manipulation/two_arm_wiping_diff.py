@@ -507,7 +507,8 @@ class TwoArmWipingDiff(TwoArmEnv):
         self.robots[1].robot_model.set_base_xpos((0.003,  0.525, 0.750))
         self.robots[1].robot_model.set_base_ori((0, 0, -np.pi))
         # self.robots[1].init_qpos = np.array([0.831, -1.666, 2.364, -2.291, -1.585, -2.313])
-        self.robots[1].init_qpos = np.array([0.831, -1.666, 2.364, -2.291, -1.585, -0.643])  # fix initial pose for camera
+        # self.robots[1].init_qpos = np.array([0.831, -1.666, 2.364, -2.291, -1.585, -0.643])  # fix initial pose for camera
+        self.robots[1].init_qpos = np.array([1.074, -1.222, 2.209, -2.576, -1.590, -0.400])
         # Get robot's contact geoms
         self.robot_contact_geoms = self.robots[1].robot_model.contact_geoms
 
