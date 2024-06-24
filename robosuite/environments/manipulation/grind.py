@@ -275,12 +275,12 @@ class Grind(SingleArmEnv):
             ), "Please input reference trajectory and reference force with the same dimensions"
 
         # Assert that if at least one reference given it has enough waypoints for finishing in @horizon timesteps
-        if isinstance(self.ref_force, np.ndarray) or isinstance(self.ref_traj, np.ndarray):
+        if isinstance(self.ref_force, np.ndarray) or isinstance(self.ref_traj, list):
             try:
                 self.traj_len = self.ref_force.shape[1]
 
             except:
-                self.traj_len = self.ref_traj.shape[1]
+                self.traj_len = len(self.ref_traj)
 
             assert (
                 self.traj_len <= self.horizon
@@ -372,11 +372,8 @@ class Grind(SingleArmEnv):
         else:
             self.contr_force_index = 0
 
-        print("action indices ",self.action_indices)
-        print("full action indices ",self.full_action_indices)
-
-
     def step(self, action):
+
         assert len(action) == len(self.action_indices)+self.contr_force_index+self.contr_impedance_index, f"Size of action {len(action)} does not match expected {len(self.action_indices)+self.contr_force_index+self.contr_impedance_index}"
 
         if self.traj_len is not None:
@@ -438,17 +435,9 @@ class Grind(SingleArmEnv):
 
             # in case of var imp, concatenate the scaled before the position part
             if self.contr_impedance_index != 0:
-                print("contr imp index", self.contr_impedance_index)
-                print("scaled", scaled_action)
-                print("scaled to concatenate", scaled_action[:self.contr_impedance_index])
-                print("residual to b conc", copy.deepcopy(residual_action))
                 action = np.concatenate([scaled_action[:self.contr_impedance_index], copy.deepcopy(residual_action)])
             else:
                 action = copy.deepcopy(residual_action)
-
-            print("in step action indices", self.action_indices)
-            print("in step residual action", action)
-            print("in step scaled", scaled_action)
 
             # Adding the agent policy action
             action[self.action_indices] += scaled_action[self.action_indices]
@@ -915,7 +904,6 @@ class Grind(SingleArmEnv):
                 - (np.array) maximum (high) action values
         """
         low, high = [], []
-        print("robot action limits", self.robots[0].action_limits)
 
         for robot in self.robots:
             lo, hi = robot.action_limits
