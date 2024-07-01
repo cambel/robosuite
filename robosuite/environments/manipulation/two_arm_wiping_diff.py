@@ -515,9 +515,9 @@ class TwoArmWipingDiff(TwoArmEnv):
 
         # load model for table top workspace
         mujoco_arena = OSXWipeArena(
-            wiping_area=(0.10, 0.10, 0.05),
+            wiping_area=(0.15, 0.15, 0.05),
             center_pose=[-0.175, 0.0],
-            num_markers=10,
+            num_markers=40,
             line_width=0.03,
             coverage_factor=0.7,
             seed=0,  # Random seed
