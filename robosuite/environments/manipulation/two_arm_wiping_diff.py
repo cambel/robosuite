@@ -508,15 +508,16 @@ class TwoArmWipingDiff(TwoArmEnv):
         self.robots[1].robot_model.set_base_ori((0, 0, -np.pi))
         # self.robots[1].init_qpos = np.array([0.831, -1.666, 2.364, -2.291, -1.585, -2.313])
         # self.robots[1].init_qpos = np.array([0.831, -1.666, 2.364, -2.291, -1.585, -0.643])  # fix initial pose for camera
-        self.robots[1].init_qpos = np.array([1.074, -1.222, 2.209, -2.576, -1.590, -0.400])
+        # self.robots[1].init_qpos = np.array([1.074, -1.222, 2.209, -2.576, -1.590, -0.400])
+        self.robots[1].init_qpos = np.array([0.788, -1.152, 2.092, -2.534, -1.584, -0.686])
         # Get robot's contact geoms
         self.robot_contact_geoms = self.robots[1].robot_model.contact_geoms
 
         # load model for table top workspace
         mujoco_arena = OSXWipeArena(
-            wiping_area=(0.10, 0.10, 0.05),
+            wiping_area=(0.15, 0.15, 0.05),
             center_pose=[-0.175, 0.0],
-            num_markers=10,
+            num_markers=40,
             line_width=0.03,
             coverage_factor=0.7,
             seed=0,  # Random seed
