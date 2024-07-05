@@ -16,20 +16,21 @@ import copy
 # Default Grind environment configuration
 DEFAULT_GRIND_CONFIG = {
     # settings for reward
+    "reward_weights": {
+        "tracking_trajectory_error": 1.0,  # reward for following the trajectory reference
+        "tracking_force_error": 1.0,  # reward for pushing into the mortar according to te force reference
+    },
     "task_complete_reward": 50.0,  # reward per task done
-    "grind_follow_reward": 0.0025830969585508424,  # reward for following the trajectory reference
-    "grind_push_reward": 0.25830969585508424,  # reward for pushing into the mortar according to te force reference
-    "quickness_reward": 0,  # reward for increased velocity
+    "exit_task_space_penalty": 0,  # penalty for moving too far away from the mortar task space
+    "collision_penalty": 0,  # reward for increased velocity
+
     "excess_accel_penalty": 0,  # penalty for end-effector accelerations over threshold
     "excess_force_penalty": 0,  # penalty for each step that the force is over the safety threshold
-    "exit_task_space_penalty": 0,  # penalty for moving too far away from the mortar task space
-    "bad_behavior_penalty": -100.0,  # the penalty received in case of early termination due to bad behavior
-                                     # meaning one of the conditions from @termination_flag, collisions or joint limits
     "force_follow_normalization": 50.0,  # max load (N)
     "traj_follow_normalization": [0.027, 0.027, 0.085, 1, 1, 1],  # traj max? penalty?
 
     # settings for thresholds and flags
-    "pressure_threshold_max": 20.0,  # maximum eef force allowed (N)
+    "force_torque_limits": [50.0, 50.0, 50.0, 10.0, 10.0, 10.0],  # maximum eef force/torque allowed (N | N/m)
     "acceleration_threshold_max": 0.1,  # maximum eef acceleration allowed (ms^-2)
     "mortar_space_threshold_max": 0.1,  # maximum distance from the mortar the eef is allowed to diverge (m)
     "termination_flag":  [False, False, False],  # list of bool values representing which of the following
@@ -37,17 +38,21 @@ DEFAULT_GRIND_CONFIG = {
     # eef accelerations too big, eef forces too big, eef fly away;
     # collisions, joint limits and successful termination are always True
 
+    # tracking settings
+    "tracking_threshold": 0.005,
+    "tracking_method": 'per_error_threshold',
+
     # misc settings
     "mortar_height": 0.047,  # (m)
     "mortar_max_radius": 0.04,  # (m)
-    "print_results": True,  # Whether to print results or not
+    "print_results": False,  # Whether to print results or not
     "get_info": False,  # Whether to grab info after each env step if not
     "use_robot_obs": True,  # if we use robot observations (proprioception) as input to the policy
     "early_terminations": True,  # Whether we allow for early terminations or not
 }
 
 
-TRACKING_METHOD = [
+TRACKING_METHODS = [
     'per_step',  # update waypoints after every step
     'per_error_threshold'  # update waypoints after the tracking error is smaller than `tracking_threshold`
 ]
@@ -188,7 +193,7 @@ class OSXGrind(SingleArmEnv):
         table_friction=(1.0, 5e-3, 1e-4),
         use_camera_obs=True,
         reward_scale=1.0,
-        reward_shaping=False,
+        reward_shaping=True,
         placement_initializer=None,
         has_renderer=False,
         has_offscreen_renderer=True,
@@ -210,11 +215,6 @@ class OSXGrind(SingleArmEnv):
         task_config=DEFAULT_GRIND_CONFIG,
         reference_trajectory=None,
         reference_force=None,
-        tracking_threshold=0.001,
-        tracking_method='per_step',
-        log_dir="",
-        evaluate=False,
-        log_details=False,
         action_indices=range(0, 6)
     ):
 
@@ -234,11 +234,20 @@ class OSXGrind(SingleArmEnv):
         self.force_follow_normalization = self.task_config["force_follow_normalization"]
         self.traj_follow_normalization = np.array(self.task_config["traj_follow_normalization"])
 
+        self.force_torque_limits = self.task_config['force_torque_limits']
+
+        # settings for the reward
+        self.reward_scale = reward_scale
+        self.reward_shaping = reward_shaping
+        self.reward_weights = self.task_config['reward_weights']
+        self.exit_task_space_penalty = self.task_config["exit_task_space_penalty"]
+        self.task_complete_reward = self.task_config["task_complete_reward"]
+        self.collision_penalty = self.task_config["collision_penalty"]
+
+        # settings for table top and task space
         self.mortar_height = self.task_config["mortar_height"]
         self.mortar_radius = self.task_config["mortar_max_radius"]
         self.mortar_space_threshold_max = self.task_config["mortar_space_threshold_max"]
-
-        # settings for table top and task space
         self.table_full_size = table_full_size
         self.table_friction = table_friction
         self.table_offset = np.array((0, 0, 0.8))
@@ -252,8 +261,13 @@ class OSXGrind(SingleArmEnv):
         self.reference_trajectory = reference_trajectory
         self.trajectory_len = len(self.reference_trajectory)
         self.reference_force = reference_force
-        self.tracking_threshold = tracking_threshold
-        self.tracking_method = tracking_method
+        self.tracking_threshold = self.task_config['tracking_threshold']
+        self.tracking_method = self.task_config['tracking_method']
+        # Verify the proposed impedance mode is supported
+        assert self.tracking_method in TRACKING_METHODS, (
+            "Error: unsupported tracking method"
+            "Inputted tracking method: {}, Supported methods: {}".format(self.tracking_method, TRACKING_METHODS)
+        )
 
         # actor action subset
         self.action_indices = action_indices
@@ -309,7 +323,55 @@ class OSXGrind(SingleArmEnv):
         return super().step(ctr_action)
 
     def reward(self, action=None):
-        return 0
+
+        reward = 0.0
+
+        # If the arm does not present unwanted behaviors (collisions, reaching joint limits,
+        # or other conditions based on @termination_flag), calculate reward
+        # (we don't want to reward grinding if there are unsafe situations)
+
+        if not self._check_task_space_limits():
+            reward = self.exit_task_space_penalty
+            self.task_space_exits += 1
+
+        elif not self._check_force_torque_limits():
+            reward = self.collision_penalty
+            self.f_excess += 1
+
+        # sparse completion reward
+        if self._check_success():
+            reward = self.task_complete_reward
+
+        # use a shaping reward
+        if self.reward_shaping:
+
+            # Reward for pushing into mortar with desired linear forces
+            # distance_from_ref_force = np.linalg.norm(self._compute_relative_wrenches()[self.action_indices])
+            # reward -= self.grind_push_reward * distance_from_ref_force
+            # self.force_reward.append(- self.grind_push_reward * distance_from_ref_force)
+
+            # Reward for following desired linear trajectory
+            tracking_trajectory_error = min(1.0 - self.tracking_error / self.tracking_threshold, 0.0)
+            reward = self.reward_weights['tracking_trajectory_error'] * tracking_trajectory_error
+            # self.position_reward.append(-self.grind_follow_reward * tracking_error)
+
+            # TODO: reward finishing faster?
+
+            # Printing results
+            if self.print_results:
+                string_to_print = (
+                    "Process {pid}, timestep {ts:>4}: reward: {rw:8.4f}, collisions: {sc:>3}, f_excess: {fe:>3}, task_space_limit: {te:>3}".format(
+                        pid=id(multiprocessing.current_process()),
+                        ts=self.timestep,
+                        rw=reward,
+                        sc=self.collisions,
+                        fe=self.f_excess,
+                        te=self.task_space_exits,
+                    )
+                )
+                print(string_to_print)
+
+        return reward
 
     def _compute_relative_distance(self):
         relative_distance = np.zeros(6)
@@ -318,7 +380,7 @@ class OSXGrind(SingleArmEnv):
             ref_quat = self.reference_trajectory[self.current_waypoint_index][3:]
             relative_distance[3:] = spalg.quaternions_orientation_error(ref_quat, self._eef_xquat)
 
-        self.tracking_error = np.linalg.norm(relative_distance[:3])
+        self.tracking_error = np.linalg.norm(relative_distance[self.action_indices])
         return relative_distance
 
     def _compute_relative_wrenches(self):
@@ -452,22 +514,20 @@ class OSXGrind(SingleArmEnv):
         super()._reset_internal()
 
         # Reset all object positions using initializer sampler if we're not directly loading from an xml
-        # if not self.deterministic_reset:
+        if not self.deterministic_reset:
 
-        #     # Sample from the placement initializer for all objects
-        #     object_placements = self.placement_initializer.sample()
+            # Sample from the placement initializer for all objects
+            object_placements = self.placement_initializer.sample()
 
-        #     # Loop through all objects and reset their positions
-        #     for obj_pos, obj_quat, obj in object_placements.values():
-        #         self.sim.data.set_joint_qpos(obj.joints[0], np.concatenate([np.array(obj_pos), np.array(obj_quat)]))
+            # Loop through all objects and reset their positions
+            for obj_pos, obj_quat, obj in object_placements.values():
+                self.sim.data.set_joint_qpos(obj.joints[0], np.concatenate([np.array(obj_pos), np.array(obj_quat)]))
 
         self.current_waypoint_index = 0
 
-        # self.collisions = 0
-        # self.timestep = 0
-        # self.f_excess = 0
-        # self.a_excess = 0
-        # self.task_space_exits = 0
+        self.collisions = 0
+        self.f_excess = 0
+        self.task_space_exits = 0
 
     def _post_action(self, action):
         """
@@ -488,7 +548,7 @@ class OSXGrind(SingleArmEnv):
             if self.tracking_method == 'per_step':
                 self.current_waypoint_index += 1
 
-            elif self.tracking_method == 'per_tracking_error':
+            elif self.tracking_method == 'per_error_threshold':
                 if self.tracking_error < self.tracking_threshold:
                     self.current_waypoint_index += 1
 
@@ -514,6 +574,12 @@ class OSXGrind(SingleArmEnv):
         """
         terminated = False
 
+        # Prematurely terminate if contacting the table with the arm
+        if self.check_contact(self.robots[0].robot_model):
+            if self.print_results:
+                print(20 * "-" + " COLLIDED " + 20 * "-")
+            terminated = True
+
         # Prematurely terminate if the end effector leave the play area
         if not self._check_task_space_limits():
             if self.print_results:
@@ -521,7 +587,7 @@ class OSXGrind(SingleArmEnv):
             terminated = True
 
         # Prematurely terminate if task is completed
-        elif self._check_success():
+        if self._check_success():
             if self.print_results:
                 print(20 * "-" + " TRACKING COMPLETED " + 20 * "-")
             terminated = True
@@ -547,7 +613,17 @@ class OSXGrind(SingleArmEnv):
         """
 
         ee_pos = self.robots[0].recent_ee_pose.current[:3]
-        return np.all(np.abs(ee_pos) < self.task_box)
+        return not np.any(np.abs(ee_pos) > self.task_box)
+
+    def _check_force_torque_limits(self):
+        """
+        Check that the robot is not exerting too much force/torque
+
+        Returns:
+            bool: True within force/torque limits
+        """
+        abs_ft = np.abs(self.robots[0].controller.current_wrench)
+        return not np.any(abs_ft > self.force_torque_limits)
 
     @property
     def action_spec(self):
