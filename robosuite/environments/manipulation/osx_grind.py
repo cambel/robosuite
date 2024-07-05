@@ -40,8 +40,7 @@ DEFAULT_GRIND_CONFIG = {
     # misc settings
     "mortar_height": 0.047,  # (m)
     "mortar_max_radius": 0.04,  # (m)
-    "print_results": False,  # Whether to print results or not
-    "print_early_termination": False,  # Whether to print early termination messages or not
+    "print_results": True,  # Whether to print results or not
     "get_info": False,  # Whether to grab info after each env step if not
     "use_robot_obs": True,  # if we use robot observations (proprioception) as input to the policy
     "early_terminations": True,  # Whether we allow for early terminations or not
@@ -229,6 +228,9 @@ class OSXGrind(SingleArmEnv):
 
         self.task_config = task_config
 
+        self.print_results = self.task_config["print_results"]
+        self.early_terminations = self.task_config["early_terminations"]
+
         self.force_follow_normalization = self.task_config["force_follow_normalization"]
         self.traj_follow_normalization = np.array(self.task_config["traj_follow_normalization"])
 
@@ -252,6 +254,9 @@ class OSXGrind(SingleArmEnv):
         self.reference_force = reference_force
         self.tracking_threshold = tracking_threshold
         self.tracking_method = tracking_method
+
+        # actor action subset
+        self.action_indices = action_indices
 
         # object placement initializer
         self.placement_initializer = placement_initializer
@@ -283,17 +288,13 @@ class OSXGrind(SingleArmEnv):
             renderer_config=renderer_config,
         )
 
-        self.action_indices = [item for item in action_indices]
-        self.full_action_indices = self.action_indices
-
     def step(self, action):
-        assert len(action) == len(self.action_indices), f"Size of action {len(action)} does not match expected {len(self.action_indices)}"
+        assert len(action) == len(self.action_indices), \
+            f"Size of action {len(action)} does not match expected {len(self.action_indices)}"
 
         pos_rot_action = np.zeros(6)
         pos_rot_action[self.action_indices] = action
 
-        # print("step", action)
-        # print("ee_ft", self.robots[0].controller.current_wrench[:3])
         ft_action = [0, 0, 0, 0, 0, 0]
 
         ctr_action = np.concatenate([pos_rot_action, ft_action])
@@ -302,11 +303,13 @@ class OSXGrind(SingleArmEnv):
         residual_action = self._compute_relative_distance()
         factor = 1 - np.tanh(100 * self.tracking_error)
         scale_factor = np.interp(factor, [0.0, 1.0], [1, 50])
-        print("error", self.tracking_error, factor, scale_factor)
+        # print("error", self.tracking_error, factor, scale_factor)
         ctr_action[:6] += residual_action * scale_factor
 
-        # print("step", ctr_action)
         return super().step(ctr_action)
+
+    def reward(self, action=None):
+        return 0
 
     def _compute_relative_distance(self):
         relative_distance = np.zeros(6)
@@ -328,9 +331,6 @@ class OSXGrind(SingleArmEnv):
             return relative_wrench
         else:
             return relative_wrench
-
-    def reward(self, action=None):
-        return 0
 
     def _load_model(self):
         """
@@ -362,10 +362,6 @@ class OSXGrind(SingleArmEnv):
         # initialize objects of interest
         self.mortar = MortarObject(
             name="mortar",
-        )
-
-        self.visual_mortar = MortarVisualObject(
-            name="mortar_visual",
         )
 
         # Create placement initializer
@@ -422,18 +418,18 @@ class OSXGrind(SingleArmEnv):
         def robot0_relative_wrench(obs_cache):
             return self._compute_relative_wrenches()
 
-        # needed in the list of observables
-        @sensor(modality=f"{pf}proprio")
-        def robot0_eef_force(obs_cache):
-            sensor_idx = np.sum(self.sim.model.sensor_dim[: self.sim.model.sensor_name2id("gripper0_force_ee")])
-            sensor_dim = self.sim.model.sensor_dim[self.sim.model.sensor_name2id("gripper0_force_ee")]
-            return np.array(self.sim.data.sensordata[sensor_idx: sensor_idx + sensor_dim])
+        # # needed in the list of observables
+        # @sensor(modality=f"{pf}proprio")
+        # def robot0_eef_force(obs_cache):
+        #     sensor_idx = np.sum(self.sim.model.sensor_dim[: self.sim.model.sensor_name2id("gripper0_force_ee")])
+        #     sensor_dim = self.sim.model.sensor_dim[self.sim.model.sensor_name2id("gripper0_force_ee")]
+        #     return np.array(self.sim.data.sensordata[sensor_idx: sensor_idx + sensor_dim])
 
-        @sensor(modality=f"{pf}proprio")
-        def robot0_eef_torque(obs_cache):
-            sensor_idx = np.sum(self.sim.model.sensor_dim[: self.sim.model.sensor_name2id("gripper0_torque_ee")])
-            sensor_dim = self.sim.model.sensor_dim[self.sim.model.sensor_name2id("gripper0_torque_ee")]
-            return np.array(self.sim.data.sensordata[sensor_idx: sensor_idx + sensor_dim])
+        # @sensor(modality=f"{pf}proprio")
+        # def robot0_eef_torque(obs_cache):
+        #     sensor_idx = np.sum(self.sim.model.sensor_dim[: self.sim.model.sensor_name2id("gripper0_torque_ee")])
+        #     sensor_dim = self.sim.model.sensor_dim[self.sim.model.sensor_name2id("gripper0_torque_ee")]
+        #     return np.array(self.sim.data.sensordata[sensor_idx: sensor_idx + sensor_dim])
 
         # sensors = [robot0_eef_force, robot0_eef_torque, robot0_relative_pose, robot0_relative_wrench]
         sensors = [robot0_relative_pose, robot0_relative_wrench]
@@ -488,9 +484,6 @@ class OSXGrind(SingleArmEnv):
         """
         reward, done, info = super()._post_action(action)
 
-        # Add termination criteria at the end of the trajectory tracking
-        self.done = self._check_success() or done
-
         if self.current_waypoint_index < self.trajectory_len - 1:
             if self.tracking_method == 'per_step':
                 self.current_waypoint_index += 1
@@ -499,7 +492,41 @@ class OSXGrind(SingleArmEnv):
                 if self.tracking_error < self.tracking_threshold:
                     self.current_waypoint_index += 1
 
-        return reward, self.done, info
+        # Add termination criteria
+        if done and self.print_results:
+            print("Max steps per episode reached")
+
+        # allow episode to finish early if allowed
+        if self.early_terminations:
+            done = done or self._check_terminated()
+
+        return reward, done, info
+
+    def _check_terminated(self):
+        """
+        Check if the task has completed one way or another. The following conditions lead to termination:
+
+            - Task space limit reached
+            - Task completion (tracking completed)
+
+        Returns:
+            bool: True if episode is terminated
+        """
+        terminated = False
+
+        # Prematurely terminate if the end effector leave the play area
+        if not self._check_task_space_limits():
+            if self.print_results:
+                print(20 * "-" + " TASK SPACE LIMIT REACHED " + 20 * "-")
+            terminated = True
+
+        # Prematurely terminate if task is completed
+        elif self._check_success():
+            if self.print_results:
+                print(20 * "-" + " TRACKING COMPLETED " + 20 * "-")
+            terminated = True
+
+        return terminated
 
     def _check_success(self):
         """
@@ -520,9 +547,7 @@ class OSXGrind(SingleArmEnv):
         """
 
         ee_pos = self.robots[0].recent_ee_pose.current[:3]
-        truth = np.abs(ee_pos) < self.task_box
-
-        return all(truth)
+        return np.all(np.abs(ee_pos) < self.task_box)
 
     @property
     def action_spec(self):
@@ -539,7 +564,7 @@ class OSXGrind(SingleArmEnv):
 
         for robot in self.robots:
             lo, hi = robot.action_limits
-            low, high = np.concatenate([low, lo[self.full_action_indices]]), np.concatenate([high, hi[self.full_action_indices]])
+            low, high = lo[self.action_indices], hi[self.action_indices]
         return low, high
 
     @property
