@@ -24,17 +24,12 @@ DEFAULT_GRIND_CONFIG = {
     "collision_penalty": 0,  # reward for increased velocity
     "excess_force_penalty": 0,  # penalty for each step that the force is over the safety threshold
 
-    "force_follow_normalization": 5.0,  # max load (N)
-    "traj_follow_normalization": [0.027, 0.027, 0.085, 1, 1, 1],  # traj max? penalty?
+    "force_follow_normalization": [50.0, 50.0, 50.0, 10.0, 10.0, 10.0],  # max load (N)
+    "traj_follow_normalization": [0.01, 0.01, 0.01, 0.1, 0.1, 0.1],  # max distance between waypoints
 
-    # settings for thresholds and flags
+    # settings for thresholds
     "force_torque_limits": [50.0, 50.0, 50.0, 10.0, 10.0, 10.0],  # maximum eef force/torque allowed (N | N/m)
-    "acceleration_threshold_max": 0.1,  # maximum eef acceleration allowed (ms^-2)
     "mortar_space_threshold_max": 0.1,  # maximum distance from the mortar the eef is allowed to diverge (m)
-    "termination_flag":  [False, False, False],  # list of bool values representing which of the following
-    # conditions are taken into account for termination of episode:
-    # eef accelerations too big, eef forces too big, eef fly away;
-    # collisions, joint limits and successful termination are always True
 
     # tracking settings
     "tracking_trajectory_threshold": 0.001,
@@ -380,8 +375,7 @@ class OSXGrind(SingleArmEnv):
             if self.reward_shaping:
 
                 # Reward for pushing into mortar with desired linear forces
-                distance_from_ref_force = -self.tracking_force_error / self.force_follow_normalization
-                print(self.tracking_force_error, self.tracking_force_error / self.force_follow_normalization)
+                distance_from_ref_force = -self.tracking_force_error
                 force_reward = self.reward_weights['tracking_force_error'] * distance_from_ref_force
 
                 # Reward for following desired linear trajectory
@@ -430,7 +424,7 @@ class OSXGrind(SingleArmEnv):
             # normalized by max load; ee_ft from controller already filtered
             relative_wrench = self.reference_force[self.current_waypoint_index] - self.ee_wrench
 
-        self.tracking_force_error = np.linalg.norm(relative_wrench[self.action_indices])
+        self.tracking_force_error = np.linalg.norm(relative_wrench / self.force_follow_normalization)
         return relative_wrench
 
     def _load_model(self):
