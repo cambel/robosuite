@@ -3,11 +3,10 @@ import numpy as np
 
 from robosuite.environments.manipulation.single_arm_env import SingleArmEnv
 from robosuite.models.arenas import TableArena
-from robosuite.models.objects import MortarObject, MortarVisualObject
-from robosuite.models.tasks import ManipulationTask, task
+from robosuite.models.objects import MortarObject
+from robosuite.models.tasks import ManipulationTask
 from robosuite.utils.observables import Observable, sensor
 from robosuite.utils.placement_samplers import UniformRandomSampler
-from robosuite.utils.transform_utils import axisangle2quat, convert_quat, mat2quat
 from ur_control import spalg
 import rospkg
 import json
@@ -23,10 +22,9 @@ DEFAULT_GRIND_CONFIG = {
     "task_complete_reward": 50.0,  # reward per task done
     "exit_task_space_penalty": 0,  # penalty for moving too far away from the mortar task space
     "collision_penalty": 0,  # reward for increased velocity
-
-    "excess_accel_penalty": 0,  # penalty for end-effector accelerations over threshold
     "excess_force_penalty": 0,  # penalty for each step that the force is over the safety threshold
-    "force_follow_normalization": 50.0,  # max load (N)
+
+    "force_follow_normalization": 5.0,  # max load (N)
     "traj_follow_normalization": [0.027, 0.027, 0.085, 1, 1, 1],  # traj max? penalty?
 
     # settings for thresholds and flags
@@ -39,13 +37,19 @@ DEFAULT_GRIND_CONFIG = {
     # collisions, joint limits and successful termination are always True
 
     # tracking settings
-    "tracking_trajectory_threshold": 0.005,
+    "tracking_trajectory_threshold": 0.001,
     "tracking_trajectory_method": 'per_error_threshold',
 
-    # misc settings
+    # Task settings
     "mortar_height": 0.047,  # (m)
     "mortar_max_radius": 0.04,  # (m)
-    "print_results": False,  # Whether to print results or not
+
+    # misc settings
+    "evaluate": False,
+    "print_results": True,  # Whether to print results or not
+    "log_rewards": False,
+    "log_details": False,
+    "log_dir": "log",
     "get_info": False,  # Whether to grab info after each env step if not
     "use_robot_obs": True,  # if we use robot observations (proprioception) as input to the policy
     "early_terminations": True,  # Whether we allow for early terminations or not
@@ -229,6 +233,8 @@ class OSXGrind(SingleArmEnv):
         self.task_config = task_config
 
         self.print_results = self.task_config["print_results"]
+        self.log_rewards = self.task_config["log_rewards"]
+        self.log_details = self.task_config["log_details"]
         self.early_terminations = self.task_config["early_terminations"]
 
         self.force_follow_normalization = self.task_config["force_follow_normalization"]
@@ -243,6 +249,7 @@ class OSXGrind(SingleArmEnv):
         self.exit_task_space_penalty = self.task_config["exit_task_space_penalty"]
         self.task_complete_reward = self.task_config["task_complete_reward"]
         self.collision_penalty = self.task_config["collision_penalty"]
+        self.excess_force_penalty = self.task_config["excess_force_penalty"]
 
         # settings for table top and task space
         self.mortar_height = self.task_config["mortar_height"]
@@ -274,6 +281,29 @@ class OSXGrind(SingleArmEnv):
 
         # object placement initializer
         self.placement_initializer = placement_initializer
+
+        # log data
+        self.evaluate = self.task_config['evaluate']
+        self.log_dir = self.task_config['log_dir']
+        self.log_dict = {
+            'rewards': {
+                'traj_error': [],
+                'force_error': [],
+            },
+            'details': {
+                'timesteps': [],
+                'waypoint': [],
+                'action_in': [],
+                'res_action': [],
+                'scl_action': [],
+                'crnt_ref': [],
+                'crnt_pos': [],
+                'crnt_f_ref': [],
+                'crnt_f': [],
+                'f_rew': [],
+                'p_rew': [],
+            }
+        }
 
         super().__init__(
             robots=robots,
@@ -317,9 +347,9 @@ class OSXGrind(SingleArmEnv):
         residual_action = self._compute_relative_distance()
         factor = 1 - np.tanh(100 * self.tracking_error)
         scale_factor = np.interp(factor, [0.0, 1.0], [1, 50])
-        # print("error", self.tracking_error, factor, scale_factor)
         ctr_action[:6] += residual_action * scale_factor
 
+        self.__log_details__(action, residual_action)
         return super().step(ctr_action)
 
     def reward(self, action=None):
@@ -333,43 +363,53 @@ class OSXGrind(SingleArmEnv):
         if not self._check_task_space_limits():
             reward = self.exit_task_space_penalty
             self.task_space_exits += 1
-
         elif not self._check_force_torque_limits():
-            reward = self.collision_penalty
+            reward = self.excess_force_penalty
             self.f_excess += 1
+        elif self.check_contact(self.robots[0].robot_model):
+            if self.reward_shaping:
+                reward = self.collision_penalty
+            self.collisions += 1
 
         # sparse completion reward
-        if self._check_success():
+        elif self._check_success():
             reward = self.task_complete_reward
 
-        # use a shaping reward
-        if self.reward_shaping:
+        else:
+            # use a shaping reward
+            if self.reward_shaping:
 
-            # Reward for pushing into mortar with desired linear forces
-            # distance_from_ref_force = np.linalg.norm(self._compute_relative_wrenches()[self.action_indices])
-            # reward -= self.grind_push_reward * distance_from_ref_force
-            # self.force_reward.append(- self.grind_push_reward * distance_from_ref_force)
+                # Reward for pushing into mortar with desired linear forces
+                distance_from_ref_force = -self.tracking_force_error / self.force_follow_normalization
+                print(self.tracking_force_error, self.tracking_force_error / self.force_follow_normalization)
+                force_reward = self.reward_weights['tracking_force_error'] * distance_from_ref_force
 
-            # Reward for following desired linear trajectory
-            tracking_trajectory_error = min(1.0 - self.tracking_error / self.tracking_trajectory_threshold, 0.0)
-            reward = self.reward_weights['tracking_trajectory_error'] * tracking_trajectory_error
-            # self.position_reward.append(-self.grind_follow_reward * tracking_error)
+                # Reward for following desired linear trajectory
+                tracking_trajectory_error = -max(self.tracking_error - self.tracking_trajectory_threshold, 0.0) / self.tracking_trajectory_threshold
+                # print(self.tracking_error, tracking_trajectory_error)
+                traj_reward = self.reward_weights['tracking_trajectory_error'] * tracking_trajectory_error
 
-            # TODO: reward finishing faster?
+                # TODO: reward for finishing faster?
 
-            # Printing results
-            if self.print_results:
-                string_to_print = (
-                    "Process {pid}, timestep {ts:>4}: reward: {rw:8.4f}, collisions: {sc:>3}, f_excess: {fe:>3}, task_space_limit: {te:>3}".format(
-                        pid=id(multiprocessing.current_process()),
-                        ts=self.timestep,
-                        rw=reward,
-                        sc=self.collisions,
-                        fe=self.f_excess,
-                        te=self.task_space_exits,
+                reward += force_reward + traj_reward
+
+                if self.log_rewards:
+                    self.log_dict['rewards']['traj_error'].append(traj_reward)
+                    self.log_dict['rewards']['force_error'].append(force_reward)
+
+                # Printing results
+                if self.print_results:
+                    string_to_print = (
+                        "Process {pid}, timestep {ts:>4}: reward: {rw:8.4f}, collisions: {sc:>3}, f_excess: {fe:>3}, task_space_limit: {te:>3}".format(
+                            pid=id(multiprocessing.current_process()),
+                            ts=self.timestep,
+                            rw=reward,
+                            sc=self.collisions,
+                            fe=self.f_excess,
+                            te=self.task_space_exits,
+                        )
                     )
-                )
-                print(string_to_print)
+                    print(string_to_print)
 
         return reward
 
@@ -380,19 +420,18 @@ class OSXGrind(SingleArmEnv):
             ref_quat = self.reference_trajectory[self.current_waypoint_index][3:]
             relative_distance[3:] = spalg.quaternions_orientation_error(ref_quat, self._eef_xquat)
 
+        # track error of the actions controlled by the policy
         self.tracking_error = np.linalg.norm(relative_distance[self.action_indices])
         return relative_distance
 
     def _compute_relative_wrenches(self):
         relative_wrench = np.zeros(6)
         if self.reference_force is not None:
-            current_waypoint = self.timestep % self.trajectory_len
             # normalized by max load; ee_ft from controller already filtered
-            # relative_wrench = (self.ref_force[:, current_waypoint] - self.robots[0].controller.ee_ft.current)/self.force_follow_normalization
-            relative_wrench = np.zeros(6)
-            return relative_wrench
-        else:
-            return relative_wrench
+            relative_wrench = self.reference_force[self.current_waypoint_index] - self.ee_wrench
+
+        self.tracking_force_error = np.linalg.norm(relative_wrench[self.action_indices])
+        return relative_wrench
 
     def _load_model(self):
         """
@@ -478,23 +517,22 @@ class OSXGrind(SingleArmEnv):
 
         @sensor(modality=f"{pf}proprio")
         def robot0_relative_wrench(obs_cache):
-            return self._compute_relative_wrenches()
+            return self._compute_relative_wrenches()/self.force_follow_normalization
+
+        @sensor(modality=f"{pf}proprio")
+        def robot0_wrench(obs_cache):
+            return self.ee_wrench
 
         # # needed in the list of observables
-        # @sensor(modality=f"{pf}proprio")
-        # def robot0_eef_force(obs_cache):
-        #     sensor_idx = np.sum(self.sim.model.sensor_dim[: self.sim.model.sensor_name2id("gripper0_force_ee")])
-        #     sensor_dim = self.sim.model.sensor_dim[self.sim.model.sensor_name2id("gripper0_force_ee")]
-        #     return np.array(self.sim.data.sensordata[sensor_idx: sensor_idx + sensor_dim])
+        @sensor(modality=f"{pf}proprio")
+        def robot0_eef_force(obs_cache):
+            return self.ee_wrench[:3]
 
-        # @sensor(modality=f"{pf}proprio")
-        # def robot0_eef_torque(obs_cache):
-        #     sensor_idx = np.sum(self.sim.model.sensor_dim[: self.sim.model.sensor_name2id("gripper0_torque_ee")])
-        #     sensor_dim = self.sim.model.sensor_dim[self.sim.model.sensor_name2id("gripper0_torque_ee")]
-        #     return np.array(self.sim.data.sensordata[sensor_idx: sensor_idx + sensor_dim])
+        @sensor(modality=f"{pf}proprio")
+        def robot0_eef_torque(obs_cache):
+            return self.ee_wrench[3:]
 
-        # sensors = [robot0_eef_force, robot0_eef_torque, robot0_relative_pose, robot0_relative_wrench]
-        sensors = [robot0_relative_pose, robot0_relative_wrench]
+        sensors = [robot0_eef_force, robot0_eef_torque, robot0_relative_pose, robot0_relative_wrench]
         names = [s.__name__ for s in sensors]
 
         # Create observables
@@ -562,6 +600,32 @@ class OSXGrind(SingleArmEnv):
 
         return reward, done, info
 
+    def _pre_action(self, action, policy_step=False):
+        """
+        Overrides the superclass method to control the robot(s) within this environment using their respective
+        controllers using the passed actions and gripper control.
+
+        Args:
+            action (np.array): The control to apply to the robot(s). Note that this should be a flat 1D array that
+                encompasses all actions to be distributed to each robot if there are multiple. For each section of the
+                action space assigned to a single robot, the first @self.robots[i].controller.control_dim dimensions
+                should be the desired controller actions and if the robot has a gripper, the next
+                @self.robots[i].gripper.dof dimensions should be actuation controls for the gripper.
+            policy_step (bool): Whether a new policy step (action) is being taken
+
+        Raises:
+            AssertionError: [Invalid action dimension]
+        """
+        # Single robot
+        robot = self.robots[0]
+
+        # Verify that the action is the correct dimension
+        assert len(action) == robot.action_dim, "environment got invalid action dimension -- expected {}, got {}".format(
+            robot.action_dim, len(action)
+        )
+
+        robot.control(action, policy_step=policy_step)
+
     def _check_terminated(self):
         """
         Check if the task has completed one way or another. The following conditions lead to termination:
@@ -622,7 +686,7 @@ class OSXGrind(SingleArmEnv):
         Returns:
             bool: True within force/torque limits
         """
-        abs_ft = np.abs(self.robots[0].controller.current_wrench)
+        abs_ft = np.abs(self.ee_wrench)
         return not np.any(abs_ft > self.force_torque_limits)
 
     @property
@@ -653,28 +717,40 @@ class OSXGrind(SingleArmEnv):
         """
         return len(self.action_indices)
 
-    def _pre_action(self, action, policy_step=False):
-        """
-        Overrides the superclass method to control the robot(s) within this environment using their respective
-        controllers using the passed actions and gripper control.
+    @property
+    def ee_wrench(self):
+        return self.robots[0].controller.current_wrench
 
-        Args:
-            action (np.array): The control to apply to the robot(s). Note that this should be a flat 1D array that
-                encompasses all actions to be distributed to each robot if there are multiple. For each section of the
-                action space assigned to a single robot, the first @self.robots[i].controller.control_dim dimensions
-                should be the desired controller actions and if the robot has a gripper, the next
-                @self.robots[i].gripper.dof dimensions should be actuation controls for the gripper.
-            policy_step (bool): Whether a new policy step (action) is being taken
+    def __log_details__(self, action, residual_action):
+        if self.log_details:
+            # save variables during training
+            self.log_dict['details']['timesteps'].append(self.timestep)
+            self.log_dict['details']['waypoint'].append(self.current_waypoint_index)
+            self.log_dict['details']['action_in'].append(action)
+            self.log_dict['details']['res_action'].append(residual_action)
+            self.log_dict['details']['current_ref'].append(self.reference_trajectory[self.current_waypoint_index])
+            self.log_dict['details']['current_pos'].append(self.robots[0].controller.ee_pos)
 
-        Raises:
-            AssertionError: [Invalid action dimension]
-        """
-        # Single robot
-        robot = self.robots[0]
+            if self.reference_force is not None:
+                self.log_dict['details']['current_force_ref'].append(self.reference_force[self.current_waypoint_index])
+                self.log_dict['details']['current_force'].append(self.ee_wrench)
 
-        # Verify that the action is the correct dimension
-        assert len(action) == robot.action_dim, "environment got invalid action dimension -- expected {}, got {}".format(
-            robot.action_dim, len(action)
-        )
+            if self.evaluate:
+                log_filename = self.log_dir + "/step_actions_eval.npz"
+            else:
+                log_filename = self.log_dir + "/step_actions.npz"
 
-        robot.control(action, policy_step=policy_step)
+            np.savez(
+                log_filename,
+                timesteps=self.log_dict['details']['timesteps'],
+                waypoint=self.log_dict['details']['waypoint'],
+                action_in=self.log_dict['details']['action_in'],
+                res_action=self.log_dict['details']['res_action'],
+                scl_action=self.log_dict['details']['scl_action'],
+                crnt_ref=self.log_dict['details']['current_ref'],
+                crnt_pos=self.log_dict['details']['current_pos'],
+                crnt_f_ref=self.log_dict['details']['current_force_ref'],
+                crnt_f=self.log_dict['details']['current_force'],
+                f_rew=self.log_dict['details']['force_reward'],
+                p_rew=self.log_dict['details']['position_reward']
+            )
