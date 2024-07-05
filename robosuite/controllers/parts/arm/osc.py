@@ -257,7 +257,7 @@ class OperationalSpaceController(Controller):
             kp, delta = action[:18], action[18:]
             self.kp = np.zeros_like(kp)
             # assume positive diagonal stiffness
-            diag_indices = [0,4,8,9,13,17]
+            diag_indices = [0, 4, 8, 9, 13, 17]
             self.kp[diag_indices] = np.clip(kp[diag_indices], self.kp_min[diag_indices], self.kp_max[diag_indices])
             # other values have no min value, it can even be negative up to the -kp_max value
             other_indices = np.ones(len(kp), np.bool)
@@ -465,8 +465,8 @@ class OperationalSpaceController(Controller):
             position_kp = np.diag(self.kp[0:3])
             orientation_kp = np.diag(self.kp[3:6])
         else:
-            position_kp = np.array(self.kp[0:9]).reshape((3,3))
-            orientation_kp = np.array(self.kp[9:18]).reshape((3,3))
+            position_kp = np.array(self.kp[0:9]).reshape((3, 3))
+            orientation_kp = np.array(self.kp[9:18]).reshape((3, 3))
 
         # F_r = kp * pos_err + kd * vel_err
         desired_force = np.dot(position_error, position_kp) + np.multiply(
