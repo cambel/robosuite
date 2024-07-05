@@ -39,8 +39,8 @@ DEFAULT_GRIND_CONFIG = {
     # collisions, joint limits and successful termination are always True
 
     # tracking settings
-    "tracking_threshold": 0.005,
-    "tracking_method": 'per_error_threshold',
+    "tracking_trajectory_threshold": 0.005,
+    "tracking_trajectory_method": 'per_error_threshold',
 
     # misc settings
     "mortar_height": 0.047,  # (m)
@@ -54,7 +54,7 @@ DEFAULT_GRIND_CONFIG = {
 
 TRACKING_METHODS = [
     'per_step',  # update waypoints after every step
-    'per_error_threshold'  # update waypoints after the tracking error is smaller than `tracking_threshold`
+    'per_error_threshold'  # update waypoints after the tracking error is smaller than `tracking_trajectory_threshold`
 ]
 
 
@@ -261,12 +261,12 @@ class OSXGrind(SingleArmEnv):
         self.reference_trajectory = reference_trajectory
         self.trajectory_len = len(self.reference_trajectory)
         self.reference_force = reference_force
-        self.tracking_threshold = self.task_config['tracking_threshold']
-        self.tracking_method = self.task_config['tracking_method']
+        self.tracking_trajectory_threshold = self.task_config['tracking_trajectory_threshold']
+        self.tracking_trajectory_method = self.task_config['tracking_trajectory_method']
         # Verify the proposed impedance mode is supported
-        assert self.tracking_method in TRACKING_METHODS, (
+        assert self.tracking_trajectory_method in TRACKING_METHODS, (
             "Error: unsupported tracking method"
-            "Inputted tracking method: {}, Supported methods: {}".format(self.tracking_method, TRACKING_METHODS)
+            "Inputted tracking method: {}, Supported methods: {}".format(self.tracking_trajectory_method, TRACKING_METHODS)
         )
 
         # actor action subset
@@ -309,7 +309,7 @@ class OSXGrind(SingleArmEnv):
         pos_rot_action = np.zeros(6)
         pos_rot_action[self.action_indices] = action
 
-        ft_action = [0, 0, 0, 0, 0, 0]
+        ft_action = self.reference_force[self.current_waypoint_index]
 
         ctr_action = np.concatenate([pos_rot_action, ft_action])
 
@@ -351,7 +351,7 @@ class OSXGrind(SingleArmEnv):
             # self.force_reward.append(- self.grind_push_reward * distance_from_ref_force)
 
             # Reward for following desired linear trajectory
-            tracking_trajectory_error = min(1.0 - self.tracking_error / self.tracking_threshold, 0.0)
+            tracking_trajectory_error = min(1.0 - self.tracking_error / self.tracking_trajectory_threshold, 0.0)
             reward = self.reward_weights['tracking_trajectory_error'] * tracking_trajectory_error
             # self.position_reward.append(-self.grind_follow_reward * tracking_error)
 
@@ -545,11 +545,11 @@ class OSXGrind(SingleArmEnv):
         reward, done, info = super()._post_action(action)
 
         if self.current_waypoint_index < self.trajectory_len - 1:
-            if self.tracking_method == 'per_step':
+            if self.tracking_trajectory_method == 'per_step':
                 self.current_waypoint_index += 1
 
-            elif self.tracking_method == 'per_error_threshold':
-                if self.tracking_error < self.tracking_threshold:
+            elif self.tracking_trajectory_method == 'per_error_threshold':
+                if self.tracking_error < self.tracking_trajectory_threshold:
                     self.current_waypoint_index += 1
 
         # Add termination criteria
