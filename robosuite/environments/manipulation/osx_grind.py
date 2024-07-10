@@ -1,5 +1,6 @@
 import multiprocessing
 import numpy as np
+import scipy.spatial as spsp
 
 from robosuite.environments.manipulation.single_arm_env import SingleArmEnv
 from robosuite.models.arenas import TableArena
@@ -334,7 +335,8 @@ class OSXGrind(SingleArmEnv):
         pos_rot_action = np.zeros(6)
         pos_rot_action[self.action_indices] = action
 
-        ft_action = self.reference_force[self.current_waypoint_index]
+        # ft_action = self.reference_force[self.current_waypoint_index]
+        ft_action = self.compute_force_ref(self._eef_xpos)
 
         ctr_action = np.concatenate([pos_rot_action, ft_action])
 
@@ -346,6 +348,33 @@ class OSXGrind(SingleArmEnv):
 
         self.__log_details__(action, residual_action)
         return super().step(ctr_action)
+
+    def compute_force_ref(self, eef_pose):
+
+        mortar_func = lambda xy: xy[0]**3 *4.123 + xy[1]**2 *1.029 # TODO put the real parameters
+        dx_mortar_func = lambda x,y: x**2 *4.123 + y**2 *1.029
+        dy_mortar_func = lambda x,y: x**3 *4.123 + y *1.029
+
+        # search in vicinity of eef pose xyz
+        XY = np.mgrid[eef_pose[0]-0.05:eef_pose[0]+0.05:0.01, eef_pose[0]-0.05:eef_pose[0]+0.05:0.01].reshape(2,-1).T
+        Z = [mortar_func(xy) for xy in XY]
+        Z = np.array(Z).reshape(-1,1)
+        A = np.concatenate([XY,Z], axis=1)
+
+        # find closest point on the mortar to the tip of the eef
+        distance,index = spsp.KDTree(A).query(eef_pose)
+        closest_point = A[index]
+
+        # the normal vector in that point will become the applied desired force, while torque set to 0 
+        # TODO would be nice to visualize this to check if its correct
+        ft_current_ref = np.array([dx_mortar_func(closest_point[0], closest_point[1]),
+                                   dy_mortar_func(closest_point[0], closest_point[1]),
+                                   -1.0,
+                                   0.0,
+                                   0.0,
+                                   0.0])
+
+        return ft_current_ref
 
     def reward(self, action=None):
 
