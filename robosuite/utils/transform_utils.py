@@ -927,3 +927,27 @@ def matrix_inverse(matrix):
         np.array: 2d-array representing the matrix inverse
     """
     return np.linalg.inv(matrix)
+
+
+@jit_decorator
+def spd_to_cholesky_vector(spd_matrix):
+    """
+        Compute Cholesky decomposition for SPD matrix.
+        Then, extract and return its lower triangle as a vector.
+    """
+    cholesky_matrix = np.linalg.cholesky(spd_matrix).ravel()
+    tril_mask = np.array([0, 3, 4, 6, 7, 8])
+    return cholesky_matrix[tril_mask]
+
+
+@jit_decorator
+def cholesky_vector_to_spd(cholesky_vector):
+    """
+        Reconstruct Cholesky decomposition matrix from vector.
+        Then compute SPD matrix L * L.T
+    """
+    cholesky_matrix = np.zeros((3, 3), dtype=np.float64)
+    mask = np.tril_indices(cholesky_matrix.shape[0], k=0)
+    for i in range(6):
+        cholesky_matrix[mask[0][i]][mask[1][i]] = cholesky_vector[i]
+    return cholesky_matrix @ cholesky_matrix.T
