@@ -179,16 +179,12 @@ class TwoArmWiping(TwoArmEnv):
 
     def __init__(
         self,
-        robots,
-        env_configuration="default",
         controller_configs=None,
-        gripper_types="default",
         initialization_noise="default",
         table_full_size=(0.8, 0.8, 0.05),
         table_friction=(1.0, 5e-3, 1e-4),
         use_camera_obs=True,
         use_object_obs=True,
-        use_condensed_obj_obs=True,
         reward_scale=1.0,
         reward_shaping=False,
         placement_initializer=None,
@@ -209,6 +205,7 @@ class TwoArmWiping(TwoArmEnv):
         camera_segmentations=None,  # {None, instance, class, element}
         renderer="mujoco",
         renderer_config=None,
+        ** kwargs,
     ):
 
         # settings for table top
@@ -545,7 +542,7 @@ class TwoArmWiping(TwoArmEnv):
                 rotation_axis="y",
                 ensure_object_boundary_in_range=False,
                 ensure_valid_placement=True,
-                reference_pos=np.array((-0.15, 0.0, 0.9)),
+                reference_pos=np.array((-0.15, 0.0, 0.87)),
             )
 
         # task includes arena, robot, and objects of interest
