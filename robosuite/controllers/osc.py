@@ -178,9 +178,10 @@ class OperationalSpaceController(Controller):
         elif self.impedance_mode == "variable_kp":
             self.control_dim += 6
         elif self.impedance_mode == "variable_full_kp":
-            self.control_dim += 18
-            self.kp_min = self.nums2array(kp_limits[0], 18)
-            self.kp_max = self.nums2array(kp_limits[1], 18)
+            # Assumes cholesky vector so 6 for position and 6 for orientation
+            self.control_dim += 12
+            self.kp_min = self.nums2array(kp_limits[0], 12)
+            self.kp_max = self.nums2array(kp_limits[1], 12)
 
         # limits
         self.position_limits = np.array(position_limits) if position_limits is not None else position_limits
@@ -214,6 +215,7 @@ class OperationalSpaceController(Controller):
             :Mode `'fixed'`: [joint pos command]
             :Mode `'variable'`: [damping_ratio values, kp values, joint pos command]
             :Mode `'variable_kp'`: [kp values, joint pos command]
+            :Mode `'variable_full_kp'`: [cholesky vector of kp values, joint pos command]
 
         Args:
             action (Iterable): Desired relative joint position goal state
@@ -233,17 +235,22 @@ class OperationalSpaceController(Controller):
             self.kp = np.clip(kp, self.kp_min, self.kp_max)
             self.kd = 2 * np.sqrt(self.kp)  # critically damped
         elif self.impedance_mode == "variable_full_kp":
-            kp, delta = action[:18], action[18:]
+            cholesky_kp, delta = action[:12], action[12:]
+            stiffness_pos_matrix = T.cholesky_vector_to_spd(cholesky_kp[:6])
+            stiffness_ori_matrix = T.cholesky_vector_to_spd(cholesky_kp[6:])
+            kp = np.concatenate([stiffness_pos_matrix.flatten(), stiffness_ori_matrix.flatten()])
+
             self.kp = np.zeros_like(kp)
+
             # assume positive diagonal stiffness
             diag_indices = [0, 4, 8, 9, 13, 17]
             self.kp[diag_indices] = np.clip(kp[diag_indices], self.kp_min[diag_indices], self.kp_max[diag_indices])
             # other values have no min value, it can even be negative up to the -kp_max value
-            other_indices = np.ones(len(kp), np.bool)
+            other_indices = np.ones(len(kp), bool)
             other_indices[diag_indices] = False
-            self.kp[other_indices] = np.sign(kp[other_indices]) * np.clip(np.abs(kp[other_indices]), 0, self.kp_max[other_indices])
+            self.kp[other_indices] = np.sign(kp[other_indices]) * np.clip(np.abs(kp[other_indices]), 0, self.kp_max[0])
             # Compute damping (preserve sign)
-            self.kd = 2 * np.sign(self.kp) * np.sqrt(np.abs(self.kp))  # critically damped
+            self.kd = 2 * np.sqrt(self.kp[diag_indices])  # critically damped
         else:  # This is case "fixed"
             delta = action
 
