@@ -244,7 +244,7 @@ class OperationalSpaceController(Controller):
 
             # assume positive diagonal stiffness
             diag_indices = [0, 4, 8, 9, 13, 17]
-            self.kp[diag_indices] = np.clip(kp[diag_indices], self.kp_min[diag_indices], self.kp_max[diag_indices])
+            self.kp[diag_indices] = np.clip(kp[diag_indices], self.kp_min[0], self.kp_max[0])
             # other values have no min value, it can even be negative up to the -kp_max value
             other_indices = np.ones(len(kp), bool)
             other_indices[diag_indices] = False
