@@ -10,7 +10,7 @@ from robosuite.controllers.osc import OperationalSpaceController
 from robosuite.utils.control_utils import *
 
 # Supported impedance modes
-COMPLIANCE_MODES = {"fixed", "variable_stiffness", "variable_stiffness_p_gains"}
+COMPLIANCE_MODES = {"fixed", "variable_stiffness", "variable_stiffness_p_gains", "variable_stiffness_full", "variable_stiffness_diag_only"}
 IK_SOLVERS = {"jacobian_transpose", "forward_dynamics"}
 
 
@@ -145,11 +145,25 @@ class ComplianceController(Controller):
         self.torque_min = self.nums2array(torque_limits[0], 3)
         self.torque_max = self.nums2array(torque_limits[1], 3)
 
+        self.stiffness = self.nums2array(stiffness, 6)
+        # stiffness limits
+        self.stiffness_min = self.nums2array(stiffness_limits[0], 6)
+        self.stiffness_max = self.nums2array(stiffness_limits[1], 6)
+
         # Add to control dim based on compliance_mode
         if self.compliance_mode == "variable_stiffness":
             self.control_dim += 6
         elif self.compliance_mode == "variable_stiffness_p_gains":
             self.control_dim += 12
+        elif self.compliance_mode == "variable_stiffness_diag_only":
+            pass
+        elif self.compliance_mode == "variable_stiffness_full":
+            self.control_dim = 18
+
+            self.stiffness = self.nums2array(stiffness, 12)
+            # stiffness limits
+            self.stiffness_min = self.nums2array(stiffness_limits[0], 12)
+            self.stiffness_max = self.nums2array(stiffness_limits[1], 12)
 
         self.use_delta = control_delta
 
@@ -160,11 +174,6 @@ class ComplianceController(Controller):
         self.kp_max = self.nums2array(kp_limits[1], 6)
         self.damping_ratio_min = self.nums2array(damping_ratio_limits[0], 6)
         self.damping_ratio_max = self.nums2array(damping_ratio_limits[1], 6)
-
-        self.stiffness = self.nums2array(stiffness, 6)
-        # stiffness limits
-        self.stiffness_min = self.nums2array(stiffness_limits[0], 6)
-        self.stiffness_max = self.nums2array(stiffness_limits[1], 6)
 
         self.error_scale = error_scale
 
@@ -203,12 +212,13 @@ class ComplianceController(Controller):
         # Compute force/torque
         # get sensor f/t measurements from gripper site, transform to world frame
 
-        gripper_in_world = self.pose_in_world_from_name(f"{self.ft_prefix}_eef")
+        gripper_in_world = self.pose_in_base_from_name(f"{self.ft_prefix}_eef")
         ee_force, ee_torque = T.force_in_A_to_force_in_B(self.get_sensor_measurement(f"{self.ft_prefix}_force_ee"),
                                                          self.get_sensor_measurement(f"{self.ft_prefix}_torque_ee"),
                                                          gripper_in_world)
         current_wrench = np.concatenate([ee_force, ee_torque])
         current_wrench -= self.ft_offset
+        # print(self.ft_prefix, current_wrench.tolist())
         self.wrench_buf.push(current_wrench)
 
     def set_goal(self, action, set_pos=None, set_ori=None):
@@ -238,6 +248,29 @@ class ComplianceController(Controller):
             delta, desired_ft, stiffness, kp = action[:6], action[6:12], action[12:18], action[18:]
             self.stiffness = np.clip(stiffness, self.stiffness_min, self.stiffness_max)
             self.kp = np.clip(kp, self.kp_min, self.kp_max)
+        elif self.compliance_mode == "variable_stiffness_diag_only":
+            stiffness, delta = action[:6], action[6:]
+            self.stiffness = np.clip(stiffness, self.stiffness_min, self.stiffness_max)
+            desired_ft = np.zeros(6)
+        elif self.compliance_mode == "variable_stiffness_full":
+            cholesky_stiffness, delta = action[:12], action[12:]
+            stiffness_pos_matrix = T.cholesky_vector_to_spd(cholesky_stiffness[:6])
+            stiffness_ori_matrix = T.cholesky_vector_to_spd(cholesky_stiffness[6:])
+            stiffness = np.concatenate([stiffness_pos_matrix.flatten(), stiffness_ori_matrix.flatten()])
+
+            self.stiffness = np.zeros_like(stiffness)
+
+            # assume positive diagonal stiffness
+            diag_indices = [0, 4, 8, 9, 13, 17]
+            self.stiffness[diag_indices] = np.clip(stiffness[diag_indices], self.stiffness_min[0], self.stiffness_max[0])
+            # other values have no min value, it can even be negative up to the -stiffness_max value
+            other_indices = np.ones(len(stiffness), bool)
+            other_indices[diag_indices] = False
+            self.stiffness[other_indices] = np.sign(stiffness[other_indices]) * np.clip(np.abs(stiffness[other_indices]), 0, self.stiffness_max[0])
+
+            # TODO:(cambel) Here we only use the diagonal values
+            self.stiffness = self.stiffness[diag_indices]
+            desired_ft = np.zeros(6)
         else:  # This is case "fixed"
             delta, desired_ft = action[:6], action[6:]
         desired_ft[:3] = np.clip(desired_ft[:3], self.force_min, self.force_max)
@@ -313,12 +346,14 @@ class ComplianceController(Controller):
 
         # Compute desired force and torque based on errors
         position_error = (desired_pos - self.ee_pos)
-        # force_torque_error = self.desired_force_torque - self.wrench_buf.average
-        force_torque_error = np.zeros(6)
+        # TODO (cambel): force/torque is too sensitive, how to fix that?
+        force_torque_error = (self.desired_force_torque - self.wrench_buf.average) * 0.1
+        # force_torque_error = np.zeros_like(force_torque_error)
 
         pose_error = np.concatenate([position_error, ori_error])
 
         error = self.stiffness * pose_error + force_torque_error
+        # error = np.zeros(6)
 
         # Compute necessary error terms for PD controller
         derr = error - self.last_err
@@ -459,6 +494,9 @@ class ComplianceController(Controller):
         elif self.compliance_mode == "variable_stiffness_p_gains":
             low = np.concatenate([self.input_min,  self.force_min, self.torque_min, self.stiffness_min, self.kp_min])
             high = np.concatenate([self.input_max, self.force_max, self.torque_max, self.stiffness_max, self.kp_max])
+        elif self.compliance_mode == "variable_stiffness_full" or self.compliance_mode == "variable_stiffness_diag_only":
+            low = np.concatenate([self.input_min,  self.stiffness_min])
+            high = np.concatenate([self.input_max, self.stiffness_max])
         else:  # This is case "fixed"
             low = np.concatenate([self.input_min, self.force_min, self.torque_min])
             high = np.concatenate([self.input_max, self.force_max, self.torque_max])
@@ -500,28 +538,10 @@ class ComplianceController(Controller):
         rot_in_world = self.sim.data.get_body_xmat(name).reshape((3, 3))
         pose_in_world = T.make_pose(pos_in_world, rot_in_world)
 
-        base_pos_in_world = self.sim.data.get_body_xpos("robot0_base")
-        base_rot_in_world = self.sim.data.get_body_xmat("robot0_base").reshape((3, 3))
+        base_pos_in_world = self.sim.data.get_body_xpos(f"robot{self.ft_prefix[-1]}_base")
+        base_rot_in_world = self.sim.data.get_body_xmat(f"robot{self.ft_prefix[-1]}_base").reshape((3, 3))
         base_pose_in_world = T.make_pose(base_pos_in_world, base_rot_in_world)
         world_pose_in_base = T.pose_inv(base_pose_in_world)
 
         pose_in_base = T.pose_in_A_to_pose_in_B(pose_in_world, world_pose_in_base)
         return pose_in_base
-
-    def pose_in_world_from_name(self, name):
-        """
-        A helper function that takes in a named data field and returns the pose
-        of that object in the world frame.
-
-        Args:
-            name (str): Name of body in sim to grab pose
-
-        Returns:
-            np.array: (4,4) array corresponding to the pose of @name in the world frame
-        """
-
-        pos_in_world = self.sim.data.get_body_xpos(name)
-        rot_in_world = self.sim.data.get_body_xmat(name).reshape((3, 3))
-        pose_in_world = T.make_pose(pos_in_world, rot_in_world)
-
-        return pose_in_world
