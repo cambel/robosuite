@@ -1,3 +1,4 @@
+from copy import deepcopy
 import multiprocessing
 import numpy as np
 from robosuite.models.arenas.osx_wipe_arena import OSXWipeArena
@@ -207,6 +208,14 @@ class TwoArmWiping(TwoArmEnv):
         renderer_config=None,
         ** kwargs,
     ):
+
+        controller_configs = [
+            deepcopy(controller_configs),
+            deepcopy(controller_configs)
+        ]
+
+        controller_configs[0]['ft_offset'] = [0.020261524133659645, -0.016895182735402466, -5.647517962429485, -0.7549887226522703, 1.8965845836510595, -0.008382508154314046]
+        controller_configs[1]['ft_offset'] = [0.0047686808817857685, -0.005253487193424327, 0.29421446353800523, -0.03327892696320982, 0.11025708260598158, 0.002508138945165534]
 
         # settings for table top
         self.table_full_size = table_full_size

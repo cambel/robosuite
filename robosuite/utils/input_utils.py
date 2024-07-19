@@ -227,7 +227,7 @@ def input2action(device, robot, active_arm="right", env_configuration=None, cont
         # Lastly, map to axis angle form
         drotation = T.quat2axisangle(drotation)
 
-    elif controller.name == "OSC_POSE" or controller.name == "OSC_POSE_FT":
+    elif controller.name == "OSC_POSE" or controller.name == "OSC_POSE_FT" or controller.name == "COMPLIANCE":
         # Flip z
         drotation[2] = -drotation[2]
         # Scale rotation for teleoperation (tuned for OSC) -- gains tuned for each device

@@ -687,7 +687,7 @@ class Robot(object):
         """
         sensor_idx = np.sum(self.sim.model.sensor_dim[: self.sim.model.sensor_name2id(sensor_name)])
         sensor_dim = self.sim.model.sensor_dim[self.sim.model.sensor_name2id(sensor_name)]
-        return np.array(self.sim.data.sensordata[sensor_idx : sensor_idx + sensor_dim])
+        return np.array(self.sim.data.sensordata[sensor_idx: sensor_idx + sensor_dim])
 
     def visualize(self, vis_settings):
         """
