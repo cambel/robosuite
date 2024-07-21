@@ -110,6 +110,8 @@ class ComplianceController(Controller):
         else:
             raise ValueError("Invalid inner_controller_config type")
 
+        inner_controller_config['control_delta'] = True
+
         self.inner_controller = inner_controller_class(
             sim,
             eef_name,
