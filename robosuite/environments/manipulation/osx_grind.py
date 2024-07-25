@@ -1,17 +1,20 @@
 import multiprocessing
 import numpy as np
+import math as m
 import scipy.spatial as spsp
+from torch import norm
 
 from robosuite.environments.manipulation.single_arm_env import SingleArmEnv
 from robosuite.models.arenas import TableArena
-from robosuite.models.objects import MortarObject
+from robosuite.models.objects import MortarObject, CylinderObject
 from robosuite.models.tasks import ManipulationTask
 from robosuite.utils.observables import Observable, sensor
 from robosuite.utils.placement_samplers import UniformRandomSampler
+import robosuite.utils.transform_utils as T
+
 from ur_control import spalg
 import rospkg
 import json
-import copy
 
 # Default Grind environment configuration
 DEFAULT_GRIND_CONFIG = {
@@ -258,6 +261,7 @@ class OSXGrind(SingleArmEnv):
 
         # references to follow
         self.current_waypoint_index = 0
+        self.ft_action = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         # Add an extra waypoint to make sure that every waypoint is
         # tracked before considering the tracking completed
         reference_trajectory = np.append(reference_trajectory, [reference_trajectory[-1]], axis=0)
@@ -292,14 +296,14 @@ class OSXGrind(SingleArmEnv):
                 'action_in': [],
                 'res_action': [],
                 'scl_action': [],
-                'crnt_ref': [],
-                'crnt_pos': [],
-                'crnt_f_ref': [],
-                'crnt_f': [],
-                'f_rew': [],
-                'p_rew': [],
+                'current_ref': [],
+                'current_pos': [],
+                'current_quat': [],
+                'current_force_ref': [],
+                'current_force': [],
             }
         }
+
 
         super().__init__(
             robots=robots,
@@ -335,10 +339,14 @@ class OSXGrind(SingleArmEnv):
         pos_rot_action = np.zeros(6)
         pos_rot_action[self.action_indices] = action
 
-        # ft_action = self.reference_force[self.current_waypoint_index]
-        ft_action = self.compute_force_ref(self._eef_xpos)
+        self.ft_action = self.reference_force[self.current_waypoint_index]
 
-        ctr_action = np.concatenate([pos_rot_action, ft_action])
+        # update in rendering the cylinder representing the normal force/direction
+        self.sim.model.body_pos[self.sim.model.body_name2id("force_cylinder_main")] = self.reference_trajectory[self.current_waypoint_index][:3]-np.array([0,0,0.02])
+        self.sim.model.body_quat[self.sim.model.body_name2id("force_cylinder_main")] = self.reference_trajectory[self.current_waypoint_index][3:]
+
+        # send action with both pose and wrench to the env
+        ctr_action = np.concatenate([pos_rot_action, self.ft_action])
 
         # online tracking of the reference trajectory
         residual_action = self._compute_relative_distance()
@@ -452,6 +460,7 @@ class OSXGrind(SingleArmEnv):
         if self.reference_force is not None:
             # normalized by max load; ee_ft from controller already filtered
             relative_wrench = self.reference_force[self.current_waypoint_index] - self.ee_wrench
+        relative_wrench = self.ft_action - self.ee_wrench
 
         self.tracking_force_error = np.linalg.norm(relative_wrench / self.force_follow_normalization)
         return relative_wrench
@@ -488,6 +497,23 @@ class OSXGrind(SingleArmEnv):
             name="mortar",
         )
 
+        # add the "ref force arrow in rendering"
+        cylinder_radius = 0.002
+        cylinder_length = 0.02
+        self.force_cylinder = CylinderObject(
+            name="force_cylinder",
+            size=(cylinder_radius, cylinder_length),
+            rgba=[0, 1, 0, 1],
+            joints=None,
+            duplicate_collision_geoms=False,
+            obj_type='visual',
+        )
+
+        # Load cylinder object
+        self.force_cylinder_object = self.force_cylinder.get_obj()
+        self.force_cylinder_object.set("pos", "0.1  0.1  0.9")
+
+
         # Create placement initializer
         if self.placement_initializer is not None:
             self.placement_initializer.reset()
@@ -509,8 +535,10 @@ class OSXGrind(SingleArmEnv):
         self.model = ManipulationTask(
             mujoco_arena=mujoco_arena,
             mujoco_robots=[robot.robot_model for robot in self.robots],
-            mujoco_objects=self.mortar,
+            mujoco_objects=[self.mortar,self.force_cylinder],
         )
+
+        self.model.merge_assets(self.force_cylinder)
 
     def _setup_references(self):
         """
@@ -522,6 +550,8 @@ class OSXGrind(SingleArmEnv):
 
         # Additional object references from this env
         self.mortar_body_id = self.sim.model.body_name2id(self.mortar.root_body)
+        self.force_cylinder_body_id = self.sim.model.body_name2id(self.force_cylinder.root_body)
+
 
     def _setup_observables(self):
         """
@@ -753,10 +783,10 @@ class OSXGrind(SingleArmEnv):
             self.log_dict['details']['res_action'].append(residual_action)
             self.log_dict['details']['current_ref'].append(self.reference_trajectory[self.current_waypoint_index])
             self.log_dict['details']['current_pos'].append(self.robots[0].controller.ee_pos)
+            self.log_dict['details']['current_quat'].append(T.mat2quat(self.robots[0].controller.ee_ori_mat))
 
-            if self.reference_force is not None:
-                self.log_dict['details']['current_force_ref'].append(self.reference_force[self.current_waypoint_index])
-                self.log_dict['details']['current_force'].append(self.ee_wrench)
+            self.log_dict['details']['current_force_ref'].append(self.ft_action)
+            self.log_dict['details']['current_force'].append(self.ee_wrench)
 
             if self.evaluate:
                 log_filename = self.log_dir + "/step_actions_eval.npz"
@@ -772,8 +802,9 @@ class OSXGrind(SingleArmEnv):
                 scl_action=self.log_dict['details']['scl_action'],
                 crnt_ref=self.log_dict['details']['current_ref'],
                 crnt_pos=self.log_dict['details']['current_pos'],
+                crnt_quat=self.log_dict['details']['current_quat'],
                 crnt_f_ref=self.log_dict['details']['current_force_ref'],
                 crnt_f=self.log_dict['details']['current_force'],
-                f_rew=self.log_dict['details']['force_reward'],
-                p_rew=self.log_dict['details']['position_reward']
+                f_rew=self.log_dict['rewards']['force_error'],
+                p_rew=self.log_dict['rewards']['traj_error']
             )
