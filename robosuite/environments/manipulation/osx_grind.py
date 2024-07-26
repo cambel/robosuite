@@ -283,6 +283,7 @@ class OSXGrind(SingleArmEnv):
         self.placement_initializer = placement_initializer
 
         # log data
+        self.prev_quat = self.reference_trajectory[0,3:]
         self.evaluate = self.task_config['evaluate']
         self.log_dir = self.task_config['log_dir']
         self.log_dict = {
@@ -351,7 +352,8 @@ class OSXGrind(SingleArmEnv):
         # online tracking of the reference trajectory
         residual_action = self._compute_relative_distance()
         factor = 1 - np.tanh(100 * self.tracking_error)
-        scale_factor = np.interp(factor, [0.0, 1.0], [1, 50])
+        scale_factor = np.interp(factor, [0.0, 1.0], [1, 80]) # play with 80 per err thresh
+        # 300 num waypoint per step ok 500
         ctr_action[:6] += residual_action * scale_factor
 
         self.__log_details__(action, residual_action)
@@ -452,7 +454,7 @@ class OSXGrind(SingleArmEnv):
             relative_distance[3:] = spalg.quaternions_orientation_error(ref_quat, self._eef_xquat)
 
         # track error of the actions controlled by the policy
-        self.tracking_error = np.linalg.norm(relative_distance[self.action_indices])
+        self.tracking_error = np.linalg.norm(relative_distance)
         return relative_distance
 
     def _compute_relative_wrenches(self):
@@ -782,9 +784,16 @@ class OSXGrind(SingleArmEnv):
             self.log_dict['details']['action_in'].append(action)
             self.log_dict['details']['res_action'].append(residual_action)
             self.log_dict['details']['current_ref'].append(self.reference_trajectory[self.current_waypoint_index])
-            self.log_dict['details']['current_pos'].append(self.robots[0].controller.ee_pos)
-            self.log_dict['details']['current_quat'].append(T.mat2quat(self.robots[0].controller.ee_ori_mat))
+            self.log_dict['details']['current_pos'].append(self._eef_xpos)
 
+            # just for plotting, make quat affine
+
+            curr_quat = self._eef_xquat
+            if np.dot(curr_quat,  self.prev_quat) < 0:
+                curr_quat = -curr_quat
+            self.prev_quat = curr_quat
+
+            self.log_dict['details']['current_quat'].append(curr_quat)
             self.log_dict['details']['current_force_ref'].append(self.ft_action)
             self.log_dict['details']['current_force'].append(self.ee_wrench)
 
