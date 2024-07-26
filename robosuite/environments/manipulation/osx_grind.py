@@ -37,7 +37,7 @@ DEFAULT_GRIND_CONFIG = {
 
     # tracking settings
     "tracking_trajectory_threshold": 0.001,
-    "tracking_trajectory_method": 'per_error_threshold',
+    "tracking_trajectory_method": 'per_step',
 
     # Task settings
     "mortar_height": 0.047,  # (m)
@@ -283,7 +283,7 @@ class OSXGrind(SingleArmEnv):
         self.placement_initializer = placement_initializer
 
         # log data
-        self.prev_quat = self.reference_trajectory[0,3:]
+        self.prev_quat = self.reference_trajectory[0, 3:]
         self.evaluate = self.task_config['evaluate']
         self.log_dir = self.task_config['log_dir']
         self.log_dict = {
@@ -304,7 +304,6 @@ class OSXGrind(SingleArmEnv):
                 'current_force': [],
             }
         }
-
 
         super().__init__(
             robots=robots,
@@ -340,10 +339,15 @@ class OSXGrind(SingleArmEnv):
         pos_rot_action = np.zeros(6)
         pos_rot_action[self.action_indices] = action
 
-        self.ft_action = self.reference_force[self.current_waypoint_index]
+        if self.reference_force is not None:
+            self.ft_action = self.reference_force[self.current_waypoint_index]
+        else:
+            # if no force reference given, compute it at each step wrt world frame orientation
+            self.ft_action = self.compute_force_ref(self._eef_xpos)
 
         # update in rendering the cylinder representing the normal force/direction
-        self.sim.model.body_pos[self.sim.model.body_name2id("force_cylinder_main")] = self.reference_trajectory[self.current_waypoint_index][:3]-np.array([0,0,0.02])
+        # assume orientation is given perpendicular to mortar surface
+        self.sim.model.body_pos[self.sim.model.body_name2id("force_cylinder_main")] = self.reference_trajectory[self.current_waypoint_index][:3]-np.array([0, 0, 0.02])
         self.sim.model.body_quat[self.sim.model.body_name2id("force_cylinder_main")] = self.reference_trajectory[self.current_waypoint_index][3:]
 
         # send action with both pose and wrench to the env
@@ -352,8 +356,7 @@ class OSXGrind(SingleArmEnv):
         # online tracking of the reference trajectory
         residual_action = self._compute_relative_distance()
         factor = 1 - np.tanh(100 * self.tracking_error)
-        scale_factor = np.interp(factor, [0.0, 1.0], [1, 80]) # play with 80 per err thresh
-        # 300 num waypoint per step ok 500
+        scale_factor = np.interp(factor, [0.0, 1.0], [1, 100])
         ctr_action[:6] += residual_action * scale_factor
 
         self.__log_details__(action, residual_action)
@@ -361,30 +364,29 @@ class OSXGrind(SingleArmEnv):
 
     def compute_force_ref(self, eef_pose):
 
-        mortar_func = lambda xy: xy[0]**3 *4.123 + xy[1]**2 *1.029 # TODO put the real parameters
-        dx_mortar_func = lambda x,y: x**2 *4.123 + y**2 *1.029
-        dy_mortar_func = lambda x,y: x**3 *4.123 + y *1.029
+        # Calculating  the force at every step
 
-        # search in vicinity of eef pose xyz
-        XY = np.mgrid[eef_pose[0]-0.05:eef_pose[0]+0.05:0.01, eef_pose[0]-0.05:eef_pose[0]+0.05:0.01].reshape(2,-1).T
-        Z = [mortar_func(xy) for xy in XY]
-        Z = np.array(Z).reshape(-1,1)
-        A = np.concatenate([XY,Z], axis=1)
+        # Define the bowl surface function and its derivatives
+        def f(x, y): return (x**4 + y**4) * 11445.39 + (y**2 * x**2 * 22890.7) + x**2 * 3.11558 + y**2 * 3.11558 - 0.038811
+        def fx(x, y): return 4*x**3 * 11445.39 + y**2 * 2*x * 22890.7 + 2*x * 3.11558
+        def fy(x, y): return 4*y**3 * 11445.39 + 2*y * x**2 * 22890.7 + 2*y * 3.11558
 
-        # find closest point on the mortar to the tip of the eef
-        distance,index = spsp.KDTree(A).query(eef_pose)
+        def normal_vector(x, y):
+            grad = np.array([fx(x, y), fy(x, y), -1])
+            return grad / np.linalg.norm(grad)
+
+        # search in vicinity of eef pose xyz TODO change from search to assumption
+        XY = np.mgrid[eef_pose[0]-0.03:eef_pose[0]+0.03:0.001, eef_pose[0]-0.03:eef_pose[0]+0.03:0.001].reshape(2, -1).T
+        Z = [f(xy) for xy in XY]
+        Z = np.array(Z).reshape(-1, 1)
+        A = np.concatenate([XY, Z], axis=1)
+
+        # find closest point on the mortar to the tip of the eef and calculate normal to surface in that point
+        distance, index = spsp.KDTree(A).query(eef_pose)
         closest_point = A[index]
+        normal_vect_direction = normal_vector(closest_point[0], closest_point[1])
 
-        # the normal vector in that point will become the applied desired force, while torque set to 0 
-        # TODO would be nice to visualize this to check if its correct
-        ft_current_ref = np.array([dx_mortar_func(closest_point[0], closest_point[1]),
-                                   dy_mortar_func(closest_point[0], closest_point[1]),
-                                   -1.0,
-                                   0.0,
-                                   0.0,
-                                   0.0])
-
-        return ft_current_ref
+        return normal_vect_direction
 
     def reward(self, action=None):
 
@@ -515,7 +517,6 @@ class OSXGrind(SingleArmEnv):
         self.force_cylinder_object = self.force_cylinder.get_obj()
         self.force_cylinder_object.set("pos", "0.1  0.1  0.9")
 
-
         # Create placement initializer
         if self.placement_initializer is not None:
             self.placement_initializer.reset()
@@ -537,7 +538,7 @@ class OSXGrind(SingleArmEnv):
         self.model = ManipulationTask(
             mujoco_arena=mujoco_arena,
             mujoco_robots=[robot.robot_model for robot in self.robots],
-            mujoco_objects=[self.mortar,self.force_cylinder],
+            mujoco_objects=[self.mortar, self.force_cylinder],
         )
 
         self.model.merge_assets(self.force_cylinder)
@@ -553,7 +554,6 @@ class OSXGrind(SingleArmEnv):
         # Additional object references from this env
         self.mortar_body_id = self.sim.model.body_name2id(self.mortar.root_body)
         self.force_cylinder_body_id = self.sim.model.body_name2id(self.force_cylinder.root_body)
-
 
     def _setup_observables(self):
         """
