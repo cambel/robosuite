@@ -85,12 +85,14 @@ class ComplianceController(Controller):
         interpolator_ori=None,
         control_delta=True,
         ik_solver="jacobian_transpose",
+        desired_ft_frame="robot_base",  # or "robot_base"
         **kwargs,  # does nothing; used so no error raised when dict is passed with extra terms used previously
     ):
 
         self.ft_prefix = eef_name.split('_')[0]
         self.ft_offset = ft_offset
         self.wrench_buf = RingBuffer(dim=6, length=ft_buffer_size)
+        self.desired_ft_frame = desired_ft_frame
 
         super().__init__(
             sim,
@@ -210,17 +212,23 @@ class ComplianceController(Controller):
 
         self.update_wrench_in_gripper_frame()
 
+    def get_wrench(self):
+        return np.concatenate([
+            self.get_sensor_measurement(f"{self.ft_prefix}_force_ee"),
+            self.get_sensor_measurement(f"{self.ft_prefix}_torque_ee"),
+        ])
+
     def update_wrench_in_gripper_frame(self):
         # Compute force/torque
         # get sensor f/t measurements from gripper site, transform to world frame
 
-        gripper_in_world = self.pose_in_base_from_name(f"{self.ft_prefix}_eef")
+        gripper_in_robot_base = self.pose_in_base_from_name(f"{self.ft_prefix}_eef")
         ee_force, ee_torque = T.force_in_A_to_force_in_B(self.get_sensor_measurement(f"{self.ft_prefix}_force_ee"),
                                                          self.get_sensor_measurement(f"{self.ft_prefix}_torque_ee"),
-                                                         gripper_in_world)
+                                                         gripper_in_robot_base)
         current_wrench = np.concatenate([ee_force, ee_torque])
-        current_wrench -= self.ft_offset
         # print(self.ft_prefix, current_wrench.tolist())
+        current_wrench -= self.ft_offset
         self.wrench_buf.push(current_wrench)
 
     def set_goal(self, action, set_pos=None, set_ori=None):
@@ -277,6 +285,17 @@ class ComplianceController(Controller):
             delta, desired_ft = action[:6], action[6:]
         desired_ft[:3] = np.clip(desired_ft[:3], self.force_min, self.force_max)
         desired_ft[3:] = np.clip(desired_ft[3:], self.torque_min, self.torque_max)
+
+        if self.desired_ft_frame == "hand":
+            gripper_in_robot_base = self.pose_in_base_from_name(f"{self.ft_prefix}_eef")
+            ee_force, ee_torque = T.force_in_A_to_force_in_B(desired_ft[:3],
+                                                             desired_ft[3:],
+                                                             gripper_in_robot_base)
+            desired_ft = np.concatenate([ee_force, ee_torque])
+        elif self.desired_ft_frame == "robot_base":
+            pass  # assume desired ft is always given in robot_base
+        else:
+            raise ValueError(f"Unknown desired ft frame `{self.desired_ft_frame}`")
 
         # If we're using deltas, interpret actions as such
         if self.use_delta:
