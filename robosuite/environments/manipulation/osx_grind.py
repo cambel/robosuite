@@ -302,6 +302,8 @@ class OSXGrind(SingleArmEnv):
                 'current_quat': [],
                 'current_force_ref': [],
                 'current_force': [],
+                'current_force_ref_eef_frame': [],
+                'current_force_eef_frame': [],
             }
         }
 
@@ -340,7 +342,19 @@ class OSXGrind(SingleArmEnv):
         pos_rot_action[self.action_indices] = action
 
         if self.reference_force is not None:
-            self.ft_action = self.reference_force[self.current_waypoint_index]
+            if self.robots[0].controller.desired_ft_frame == "hand":
+                # If i receive a reference in the gripper frame directly, change it to base frame
+                gripper_in_robot_base = self.robots[0].controller.pose_in_base_from_name(f"{self.robots[0].controller.ft_prefix}_eef")
+                ee_force, ee_torque = T.force_in_A_to_force_in_B(self.reference_force[self.current_waypoint_index][:3],
+                                                                 self.reference_force[self.current_waypoint_index][3:],
+                                                                 gripper_in_robot_base)
+
+                self.ft_action = np.concatenate([ee_force, ee_torque])
+
+            else:
+                # If i receive a reference in base frame directly
+                self.ft_action = self.reference_force[self.current_waypoint_index]
+
         else:
             # if no force reference given, compute it at each step wrt world frame orientation
             self.ft_action = self.compute_force_ref(self._eef_xpos)
@@ -351,12 +365,13 @@ class OSXGrind(SingleArmEnv):
         self.sim.model.body_quat[self.sim.model.body_name2id("force_cylinder_main")] = self.reference_trajectory[self.current_waypoint_index][3:]
 
         # send action with both pose and wrench to the env
+        # send the ft action already in base frame
         ctr_action = np.concatenate([pos_rot_action, self.ft_action])
 
         # online tracking of the reference trajectory
         residual_action = self._compute_relative_distance()
         factor = 1 - np.tanh(100 * self.tracking_error)
-        scale_factor = np.interp(factor, [0.0, 1.0], [1, 100])
+        scale_factor = np.interp(factor, [0.0, 1.0], [1, 1000])  # TODO get some good values for per step and per thresh
         ctr_action[:6] += residual_action * scale_factor
 
         self.__log_details__(action, residual_action)
@@ -461,9 +476,8 @@ class OSXGrind(SingleArmEnv):
 
     def _compute_relative_wrenches(self):
         relative_wrench = np.zeros(6)
-        if self.reference_force is not None:
-            # normalized by max load; ee_ft from controller already filtered
-            relative_wrench = self.reference_force[self.current_waypoint_index] - self.ee_wrench
+
+        # in base frame
         relative_wrench = self.ft_action - self.ee_wrench
 
         self.tracking_force_error = np.linalg.norm(relative_wrench / self.force_follow_normalization)
@@ -787,15 +801,21 @@ class OSXGrind(SingleArmEnv):
             self.log_dict['details']['current_pos'].append(self._eef_xpos)
 
             # just for plotting, make quat affine
-
             curr_quat = self._eef_xquat
             if np.dot(curr_quat,  self.prev_quat) < 0:
                 curr_quat = -curr_quat
             self.prev_quat = curr_quat
 
             self.log_dict['details']['current_quat'].append(curr_quat)
+
             self.log_dict['details']['current_force_ref'].append(self.ft_action)
+            # TODO separate case hand from base
+            self.log_dict['details']['current_force_ref_eef_frame'].append(self.reference_force[self.current_waypoint_index])
             self.log_dict['details']['current_force'].append(self.ee_wrench)
+
+            ft_eef_frame_wrench = np.concatenate([self.robots[0].controller.get_sensor_measurement(f"{ self.robots[0].controller.ft_prefix}_force_ee"),
+                                                  self.robots[0].controller.get_sensor_measurement(f"{ self.robots[0].controller.ft_prefix}_torque_ee")])
+            self.log_dict['details']['current_force_eef_frame'].append(ft_eef_frame_wrench)
 
             if self.evaluate:
                 log_filename = self.log_dir + "/step_actions_eval.npz"
@@ -813,6 +833,8 @@ class OSXGrind(SingleArmEnv):
                 crnt_pos=self.log_dict['details']['current_pos'],
                 crnt_quat=self.log_dict['details']['current_quat'],
                 crnt_f_ref=self.log_dict['details']['current_force_ref'],
+                crnt_f_ref_eef=self.log_dict['details']['current_force_ref_eef_frame'],
+                crnt_f_eef=self.log_dict['details']['current_force_eef_frame'],
                 crnt_f=self.log_dict['details']['current_force'],
                 f_rew=self.log_dict['rewards']['force_error'],
                 p_rew=self.log_dict['rewards']['traj_error']
