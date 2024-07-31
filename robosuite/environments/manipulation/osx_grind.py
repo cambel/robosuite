@@ -586,7 +586,7 @@ class OSXGrind(SingleArmEnv):
 
         @sensor(modality=f"{pf}proprio")
         def robot0_relative_wrench(obs_cache):
-            return self._compute_relative_wrenches()/self.force_follow_normalization
+            return self._compute_relative_wrenches()
 
         @sensor(modality=f"{pf}proprio")
         def robot0_wrench(obs_cache):
