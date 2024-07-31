@@ -144,7 +144,7 @@ class ComplianceController(Controller):
         self.output_min = self.nums2array(inner_controller_config['output_min'], self.control_dim)
 
         self.control_dim += 6  # + force/torque
-        self.force_min = self.nums2array(force_limits[0], 3)
+        self.force_min = self.nums2array(force_limits[0], 3)  # TODO Q: are these imposed anywhere?
         self.force_max = self.nums2array(force_limits[1], 3)
         self.torque_min = self.nums2array(torque_limits[0], 3)
         self.torque_max = self.nums2array(torque_limits[1], 3)
@@ -239,7 +239,7 @@ class ComplianceController(Controller):
 
         Note that @action expected to be in the following format, based on impedance mode!
 
-            :Mode `'fixed'`: [joint pos command]
+            :Mode `'fixed'`: [joint pos command] # TODO change to eef pose
             :Mode `'variable'`: [damping_ratio values, kp values, joint pos command]
             :Mode `'variable_kp'`: [kp values, joint pos command]
 
@@ -286,16 +286,16 @@ class ComplianceController(Controller):
         desired_ft[:3] = np.clip(desired_ft[:3], self.force_min, self.force_max)
         desired_ft[3:] = np.clip(desired_ft[3:], self.torque_min, self.torque_max)
 
-        if self.desired_ft_frame == "hand":
-            gripper_in_robot_base = self.pose_in_base_from_name(f"{self.ft_prefix}_eef")
-            ee_force, ee_torque = T.force_in_A_to_force_in_B(desired_ft[:3],
-                                                             desired_ft[3:],
-                                                             gripper_in_robot_base)
-            desired_ft = np.concatenate([ee_force, ee_torque])
-        elif self.desired_ft_frame == "robot_base":
-            pass  # assume desired ft is always given in robot_base
-        else:
-            raise ValueError(f"Unknown desired ft frame `{self.desired_ft_frame}`")
+        # if self.desired_ft_frame == "hand":
+        #     gripper_in_robot_base = self.pose_in_base_from_name(f"{self.ft_prefix}_eef")
+        #     ee_force, ee_torque = T.force_in_A_to_force_in_B(desired_ft[:3],
+        #                                                      desired_ft[3:],
+        #                                                      gripper_in_robot_base)
+        #     desired_ft = np.concatenate([ee_force, ee_torque])
+        # elif self.desired_ft_frame == "robot_base":
+        #     pass  # assume desired ft is always given in robot_base
+        # else:
+        #     raise ValueError(f"Unknown desired ft frame `{self.desired_ft_frame}`")
 
         # If we're using deltas, interpret actions as such
         if self.use_delta:
@@ -368,7 +368,7 @@ class ComplianceController(Controller):
         # Compute desired force and torque based on errors
         position_error = (desired_pos - self.ee_pos)
         # TODO (cambel): force/torque is too sensitive, how to fix that?
-        force_torque_error = (self.desired_force_torque - self.wrench_buf.average) * 0.1
+        force_torque_error = (self.desired_force_torque - self.wrench_buf.average) * [0.1, 0.1, 0.1, 0.0, 0.0, 0.0]
         # force_torque_error = np.zeros_like(force_torque_error)
 
         pose_error = np.concatenate([position_error, ori_error])
