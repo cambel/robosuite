@@ -36,8 +36,8 @@ DEFAULT_GRIND_CONFIG = {
     "mortar_space_threshold_max": 0.1,  # maximum distance from the mortar the eef is allowed to diverge (m)
 
     # tracking settings
-    "tracking_trajectory_threshold": 0.001,
-    "tracking_trajectory_method": 'per_step',
+    "tracking_trajectory_threshold": 0.01,
+    "tracking_trajectory_method": 'per_error_threshold',
 
     # Task settings
     "mortar_height": 0.047,  # (m)
@@ -45,13 +45,13 @@ DEFAULT_GRIND_CONFIG = {
 
     # misc settings
     "evaluate": False,
-    "print_results": True,  # Whether to print results or not
+    "print_results": False,  # Whether to print results or not
     "log_rewards": False,
-    "log_details": False,
+    "log_details": True,
     "log_dir": "log",
     "get_info": False,  # Whether to grab info after each env step if not
     "use_robot_obs": True,  # if we use robot observations (proprioception) as input to the policy
-    "early_terminations": True,  # Whether we allow for early terminations or not
+    "early_terminations": False,  # Whether we allow for early terminations or not
 }
 
 
@@ -382,7 +382,7 @@ class OSXGrind(SingleArmEnv):
         # Calculating  the force at every step
 
         # Define the bowl surface function and its derivatives
-        def f(x, y): return (x**4 + y**4) * 11445.39 + (y**2 * x**2 * 22890.7) + x**2 * 3.11558 + y**2 * 3.11558 - 0.038811
+        def f(xy): return (xy[0]**4 + xy[1]**4) * 11445.39 + (xy[1]**2 * xy[0]**2 * 22890.7) + xy[0]**2 * 3.11558 + xy[1]**2 * 3.11558 - 0.038811
         def fx(x, y): return 4*x**3 * 11445.39 + y**2 * 2*x * 22890.7 + 2*x * 3.11558
         def fy(x, y): return 4*y**3 * 11445.39 + 2*y * x**2 * 22890.7 + 2*y * 3.11558
 
@@ -401,7 +401,7 @@ class OSXGrind(SingleArmEnv):
         closest_point = A[index]
         normal_vect_direction = normal_vector(closest_point[0], closest_point[1])
 
-        return normal_vect_direction
+        return np.concatenate([normal_vect_direction, np.array([0, 0, 0])])  # is it zeroes or sth else
 
     def reward(self, action=None):
 
@@ -621,14 +621,14 @@ class OSXGrind(SingleArmEnv):
         super()._reset_internal()
 
         # Reset all object positions using initializer sampler if we're not directly loading from an xml
-        if not self.deterministic_reset:
+        # if not self.deterministic_reset:
 
-            # Sample from the placement initializer for all objects
-            object_placements = self.placement_initializer.sample()
+        #     # Sample from the placement initializer for all objects
+        #     object_placements = self.placement_initializer.sample()
 
-            # Loop through all objects and reset their positions
-            for obj_pos, obj_quat, obj in object_placements.values():
-                self.sim.data.set_joint_qpos(obj.joints[0], np.concatenate([np.array(obj_pos), np.array(obj_quat)]))
+        #     # Loop through all objects and reset their positions
+        #     for obj_pos, obj_quat, obj in object_placements.values():
+        #         self.sim.data.set_joint_qpos(obj.joints[0], np.concatenate([np.array(obj_pos), np.array(obj_quat)]))
 
         self.current_waypoint_index = 0
 
