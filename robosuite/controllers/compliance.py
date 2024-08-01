@@ -370,10 +370,15 @@ class ComplianceController(Controller):
         # TODO (cambel): force/torque is too sensitive, how to fix that?
         force_torque_error = (self.desired_force_torque - self.wrench_buf.average) * [0.1, 0.1, 0.1, 0.0, 0.0, 0.0]
         # force_torque_error = np.zeros_like(force_torque_error)
-
         pose_error = np.concatenate([position_error, ori_error])
 
-        error = self.stiffness * pose_error + force_torque_error
+        # apply the selection matrix in gripper frame
+        selection_matrix_gripper_frame = np.diag([0.5, 0.5, 0, 1, 1, 1])
+        eef_to_base = self.pose_in_base_from_name(f"{self.ft_prefix}_eef")[:3, :3]
+        pose_error_sel, force_torque_error_sel = self.apply_selection_matrix_gripper_frame(pose_error, force_torque_error, selection_matrix_gripper_frame, eef_to_base)
+
+        # base frame error
+        error = self.stiffness * pose_error_sel + force_torque_error_sel
         # error = np.zeros(6)
 
         # Compute necessary error terms for PD controller
@@ -390,6 +395,26 @@ class ComplianceController(Controller):
             return self.use_joint_pos_vel(desired_wrench)
         elif self.inner_controller_type == "OSC_POSE":
             return self.use_osc(desired_wrench)
+
+    def apply_selection_matrix_gripper_frame(self, pos_error_ref, force_error_ref, selection_matrix_gripper, R_gripper_to_ref):  # TODO maybe with quat is faster
+        # Convert errors from reference frame to gripper frame
+        pos_error_gripper = R_gripper_to_ref.T @ pos_error_ref[:3]  # transpose,not inv since its just rotation, without translation
+        ori_error_gripper = R_gripper_to_ref.T @ pos_error_ref[3:]
+        force_error_gripper = R_gripper_to_ref.T @ force_error_ref[:3]
+        torque_error_gripper = R_gripper_to_ref.T @ force_error_ref[3:]
+
+        # Apply selection matrix in gripper frame
+        selected_pose_error_gripper = selection_matrix_gripper @ np.concatenate([pos_error_gripper, ori_error_gripper])
+        selected_ft_error_gripper = (np.eye(6) - selection_matrix_gripper) @ np.concatenate([force_error_gripper, torque_error_gripper])
+
+        # Convert selected errors back to reference frame
+        selected_pos_error_ref = R_gripper_to_ref @ selected_pose_error_gripper[:3]
+        selected_ori_error_ref = R_gripper_to_ref @ selected_pose_error_gripper[3:]
+
+        selected_force_error_ref = R_gripper_to_ref @ selected_ft_error_gripper[:3]
+        selected_torque_error_ref = R_gripper_to_ref @ selected_ft_error_gripper[3:]
+
+        return np.concatenate([selected_pos_error_ref, selected_ori_error_ref]), np.concatenate([selected_force_error_ref, selected_torque_error_ref])
 
     def use_osc(self, desired_wrench):
         self.inner_controller.set_goal(action=desired_wrench)
