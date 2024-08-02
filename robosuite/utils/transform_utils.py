@@ -993,3 +993,40 @@ def ortho62mat(ortho6):
     y = np.cross(z, x)
 
     return np.column_stack((x, y, z))
+
+
+def force_frame_transform(bTa):
+    """
+    Calculates the coordinate transformation for force vectors.
+    The force vectors obey special transformation rules.
+    B{Reference:} Handbook of robotics page 39, equation 2.9
+    @type bTa: array, shape (4,4)
+    @param bTa: Homogeneous transformation that represents the position
+    and orientation of frame M{A} relative to frame M{B}
+    @rtype: array, shape (6,6)
+    @return: The coordinate transformation from M{A} to M{B} for force
+    vectors
+    """
+    aTb = pose_inv(bTa)
+    return motion_frame_transform(aTb).T
+
+
+def motion_frame_transform(bTa):
+    """
+    Calculates the coordinate transformation for motion vectors.
+    The motion vectors obey special transformation rules.
+    B{Reference:} Handbook of robotics page 39, equation 2.9
+    @type bTa: array, shape (4,4)
+    @param bTa: Homogeneous transformation that represents the position
+    and orientation of frame M{A} relative to frame M{B}
+    @rtype: array, shape (6,6)
+    @return: The coordinate transformation from M{A} to M{B} for motion
+    vectors
+    """
+    bRa = bTa[:3, :3]
+    bPa = bTa[:3, 3]
+    bXa = np.zeros((6, 6))
+    bXa[:3, :3] = bRa
+    bXa[3:, :3] = np.dot(_skew_symmetric_translation(bPa), bRa)
+    bXa[3:, 3:] = bRa
+    return bXa
