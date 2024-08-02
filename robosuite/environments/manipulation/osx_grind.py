@@ -51,7 +51,7 @@ DEFAULT_GRIND_CONFIG = {
     "log_dir": "log",
     "get_info": False,  # Whether to grab info after each env step if not
     "use_robot_obs": True,  # if we use robot observations (proprioception) as input to the policy
-    "early_terminations": False,  # Whether we allow for early terminations or not
+    "early_terminations": True,  # Whether we allow for early terminations or not
 }
 
 
@@ -371,7 +371,7 @@ class OSXGrind(SingleArmEnv):
         # online tracking of the reference trajectory
         residual_action = self._compute_relative_distance()
         factor = 1 - np.tanh(100 * self.tracking_error)
-        scale_factor = np.interp(factor, [0.0, 1.0], [1, 1000])  # TODO get some good values for per step and per thresh
+        scale_factor = np.interp(factor, [0.0, 1.0], [1, 80])  # TODO get some good values for per step and per thresh
         ctr_action[:6] += residual_action * scale_factor
 
         self.__log_details__(action, residual_action)
@@ -621,14 +621,14 @@ class OSXGrind(SingleArmEnv):
         super()._reset_internal()
 
         # Reset all object positions using initializer sampler if we're not directly loading from an xml
-        # if not self.deterministic_reset:
+        if not self.deterministic_reset:
 
-        #     # Sample from the placement initializer for all objects
-        #     object_placements = self.placement_initializer.sample()
+            # Sample from the placement initializer for all objects
+            object_placements = self.placement_initializer.sample()
 
-        #     # Loop through all objects and reset their positions
-        #     for obj_pos, obj_quat, obj in object_placements.values():
-        #         self.sim.data.set_joint_qpos(obj.joints[0], np.concatenate([np.array(obj_pos), np.array(obj_quat)]))
+            # Loop through all objects and reset their positions
+            for obj_pos, obj_quat, obj in object_placements.values():
+                self.sim.data.set_joint_qpos(obj.joints[0], np.concatenate([np.array(obj_pos), np.array(obj_quat)]))
 
         self.current_waypoint_index = 0
 
@@ -802,20 +802,18 @@ class OSXGrind(SingleArmEnv):
 
             # just for plotting, make quat affine
             curr_quat = self._eef_xquat
-            if np.dot(curr_quat,  self.prev_quat) < 0:
+            if np.dot(curr_quat,  self.prev_quat) < 0:  # if pointing in opposite directions
                 curr_quat = -curr_quat
             self.prev_quat = curr_quat
 
             self.log_dict['details']['current_quat'].append(curr_quat)
 
             self.log_dict['details']['current_force_ref'].append(self.ft_action)
-            # TODO separate case hand from base
-            self.log_dict['details']['current_force_ref_eef_frame'].append(self.reference_force[self.current_waypoint_index])
             self.log_dict['details']['current_force'].append(self.ee_wrench)
 
-            ft_eef_frame_wrench = np.concatenate([self.robots[0].controller.get_sensor_measurement(f"{ self.robots[0].controller.ft_prefix}_force_ee"),
-                                                  self.robots[0].controller.get_sensor_measurement(f"{ self.robots[0].controller.ft_prefix}_torque_ee")])
-            self.log_dict['details']['current_force_eef_frame'].append(ft_eef_frame_wrench)
+            # TODO separate case hand from base
+            self.log_dict['details']['current_force_ref_eef_frame'].append(self.reference_force[self.current_waypoint_index])
+            self.log_dict['details']['current_force_eef_frame'].append(self.robots[0].controller.eef_wrench_buf.average)
 
             if self.evaluate:
                 log_filename = self.log_dir + "/step_actions_eval.npz"
