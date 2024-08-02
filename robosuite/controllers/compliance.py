@@ -92,6 +92,7 @@ class ComplianceController(Controller):
         self.ft_prefix = eef_name.split('_')[0]
         self.ft_offset = ft_offset
         self.wrench_buf = RingBuffer(dim=6, length=ft_buffer_size)
+        self.eef_wrench_buf = RingBuffer(dim=6, length=ft_buffer_size)
         self.desired_ft_frame = desired_ft_frame
 
         super().__init__(
@@ -210,7 +211,7 @@ class ComplianceController(Controller):
         self.current_joint_velocities = self.joint_vel
         self.last_joint_velocities = copy(self.joint_vel)
 
-        self.update_wrench_in_gripper_frame()
+        self.transform_wrench_to_base_frame()
 
     def get_wrench(self):
         return np.concatenate([
@@ -218,18 +219,18 @@ class ComplianceController(Controller):
             self.get_sensor_measurement(f"{self.ft_prefix}_torque_ee"),
         ])
 
-    def update_wrench_in_gripper_frame(self):
+    def transform_wrench_to_base_frame(self):
         # Compute force/torque
         # get sensor f/t measurements from gripper site, transform to world frame
+        wrench_force = self.get_wrench()
+        wrench_force -= self.ft_offset
 
         gripper_in_robot_base = self.pose_in_base_from_name(f"{self.ft_prefix}_eef")
-        ee_force, ee_torque = T.force_in_A_to_force_in_B(self.get_sensor_measurement(f"{self.ft_prefix}_force_ee"),
-                                                         self.get_sensor_measurement(f"{self.ft_prefix}_torque_ee"),
-                                                         gripper_in_robot_base)
-        current_wrench = np.concatenate([ee_force, ee_torque])
-        # print(self.ft_prefix, current_wrench.tolist())
-        current_wrench -= self.ft_offset
+        wFtS = T.force_frame_transform(gripper_in_robot_base)
+        current_wrench = np.dot(wFtS, wrench_force)
+
         self.wrench_buf.push(current_wrench)
+        self.eef_wrench_buf.push(wrench_force)
 
     def set_goal(self, action, set_pos=None, set_ori=None):
         """
@@ -239,7 +240,7 @@ class ComplianceController(Controller):
 
         Note that @action expected to be in the following format, based on impedance mode!
 
-            :Mode `'fixed'`: [joint pos command] # TODO change to eef pose
+            :Mode `'fixed'`: [joint pos command] # TODO change name in docs to eef pose
             :Mode `'variable'`: [damping_ratio values, kp values, joint pos command]
             :Mode `'variable_kp'`: [kp values, joint pos command]
 
@@ -285,17 +286,6 @@ class ComplianceController(Controller):
             delta, desired_ft = action[:6], action[6:]
         desired_ft[:3] = np.clip(desired_ft[:3], self.force_min, self.force_max)
         desired_ft[3:] = np.clip(desired_ft[3:], self.torque_min, self.torque_max)
-
-        # if self.desired_ft_frame == "hand":
-        #     gripper_in_robot_base = self.pose_in_base_from_name(f"{self.ft_prefix}_eef")
-        #     ee_force, ee_torque = T.force_in_A_to_force_in_B(desired_ft[:3],
-        #                                                      desired_ft[3:],
-        #                                                      gripper_in_robot_base)
-        #     desired_ft = np.concatenate([ee_force, ee_torque])
-        # elif self.desired_ft_frame == "robot_base":
-        #     pass  # assume desired ft is always given in robot_base
-        # else:
-        #     raise ValueError(f"Unknown desired ft frame `{self.desired_ft_frame}`")
 
         # If we're using deltas, interpret actions as such
         if self.use_delta:
@@ -368,18 +358,16 @@ class ComplianceController(Controller):
         # Compute desired force and torque based on errors
         position_error = (desired_pos - self.ee_pos)
         # TODO (cambel): force/torque is too sensitive, how to fix that?
-        force_torque_error = (self.desired_force_torque - self.wrench_buf.average) * [0.1, 0.1, 0.1, 0.0, 0.0, 0.0]
-        # force_torque_error = np.zeros_like(force_torque_error)
+        force_torque_error = (self.desired_force_torque - self.current_wrench) * [0.1, 0.1, 0.1, 0.0, 0.0, 0.0]
         pose_error = np.concatenate([position_error, ori_error])
 
         # apply the selection matrix in gripper frame
-        selection_matrix_gripper_frame = np.diag([0.5, 0.5, 0, 1, 1, 1])
-        eef_to_base = self.pose_in_base_from_name(f"{self.ft_prefix}_eef")[:3, :3]
+        selection_matrix_gripper_frame = np.diag([1, 1, 0, 1, 1, 1])
+        eef_to_base = self.pose_in_base_from_name(f"{self.ft_prefix}_eef")[:3, :3]  # get just rotation matrix
         pose_error_sel, force_torque_error_sel = self.apply_selection_matrix_gripper_frame(pose_error, force_torque_error, selection_matrix_gripper_frame, eef_to_base)
 
         # base frame error
         error = self.stiffness * pose_error_sel + force_torque_error_sel
-        # error = np.zeros(6)
 
         # Compute necessary error terms for PD controller
         derr = error - self.last_err
