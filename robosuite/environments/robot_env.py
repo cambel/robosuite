@@ -7,6 +7,7 @@ import robosuite.macros as macros
 from robosuite.controllers import reset_controllers
 from robosuite.environments.base import MujocoEnv
 from robosuite.robots import ROBOT_CLASS_MAPPING
+from robosuite.robots.single_arm import SingleArm
 from robosuite.utils.mjcf_utils import IMAGE_CONVENTION_MAPPING
 from robosuite.utils.observables import Observable, sensor
 
@@ -151,7 +152,7 @@ class RobotEnv(MujocoEnv):
         robots = list(robots) if type(robots) is list or type(robots) is tuple else [robots]
         self.num_robots = len(robots)
         self.robot_names = robots
-        self.robots = self._input2list(None, self.num_robots)
+        self.robots: list[SingleArm] = self._input2list(None, self.num_robots)
         self._action_dim = None
 
         # Mount

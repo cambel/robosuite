@@ -1,3 +1,4 @@
+from copy import deepcopy
 import multiprocessing
 import numpy as np
 from robosuite.models.arenas.osx_wipe_arena import OSXWipeArena
@@ -179,16 +180,12 @@ class TwoArmWiping(TwoArmEnv):
 
     def __init__(
         self,
-        robots,
-        env_configuration="default",
         controller_configs=None,
-        gripper_types="default",
         initialization_noise="default",
         table_full_size=(0.8, 0.8, 0.05),
         table_friction=(1.0, 5e-3, 1e-4),
         use_camera_obs=True,
         use_object_obs=True,
-        use_condensed_obj_obs=True,
         reward_scale=1.0,
         reward_shaping=False,
         placement_initializer=None,
@@ -209,7 +206,16 @@ class TwoArmWiping(TwoArmEnv):
         camera_segmentations=None,  # {None, instance, class, element}
         renderer="mujoco",
         renderer_config=None,
+        ** kwargs,
     ):
+
+        controller_configs = [
+            deepcopy(controller_configs),
+            deepcopy(controller_configs)
+        ]
+
+        controller_configs[0]['ft_offset'] = [0.020261524133659645, -0.016895182735402466, -5.647517962429485, -0.7549887226522703, 1.8965845836510595, -0.008382508154314046]
+        controller_configs[1]['ft_offset'] = [0.0047686808817857685, -0.005253487193424327, 0.29421446353800523, -0.03327892696320982, 0.11025708260598158, 0.002508138945165534]
 
         # settings for table top
         self.table_full_size = table_full_size
@@ -545,7 +551,7 @@ class TwoArmWiping(TwoArmEnv):
                 rotation_axis="y",
                 ensure_object_boundary_in_range=False,
                 ensure_valid_placement=True,
-                reference_pos=np.array((-0.15, 0.0, 0.9)),
+                reference_pos=np.array((-0.15, 0.0, 0.87)),
             )
 
         # task includes arena, robot, and objects of interest

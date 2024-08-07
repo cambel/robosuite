@@ -143,7 +143,7 @@ class OperationalSpaceControllerFT(Controller):
         uncouple_pos_ori=True,
         ft_ref_flag=True,
         ft_limits=(0, 20),
-        force_active_case="no-action",
+        force_active_case="position",
         kp_force=np.array([10., 10., 10., 10., 10., 10.]),
         ki_force=np.array([1., 1., 1., 1., 1., 1.]),
         **kwargs,  # does nothing; used so no error raised when dict is passed with extra terms used previously
@@ -240,8 +240,10 @@ class OperationalSpaceControllerFT(Controller):
 
         self.kp_force = kp_force
         self.ki_force = ki_force
+
         # Default to position control
         self.selection_matrix = np.eye(6)
+        self.selection_matrix /= 2.0
 
     def set_goal(self, action, set_pos=None, set_ori=None):
         """
@@ -263,13 +265,19 @@ class OperationalSpaceControllerFT(Controller):
         # Update state
         self.update()
 
-        # Parse action based on the impedance mode, and update kp / kd as necessary
+        # Parse action based on the impedance mode, and update kp / kd as necessary TODO make this cleaner
         if self.impedance_mode == "variable":
-            damping_ratio, kp, delta = action[:6], action[6:12], action[12:]
+            if self.ft_ref_flag is True:
+                damping_ratio, kp, delta, self.FT_reference = action[:6], action[6:12], action[12:18], action[18:]
+            else:
+                damping_ratio, kp, delta = action[:6], action[6:12], action[12:]
             self.kp = np.clip(kp, self.kp_min, self.kp_max)
             self.kd = 2 * np.sqrt(self.kp) * np.clip(damping_ratio, self.damping_ratio_min, self.damping_ratio_max)
         elif self.impedance_mode == "variable_kp":
-            kp, delta = action[:6], action[6:]
+            if self.ft_ref_flag is True:
+                kp, delta, self.FT_reference = action[:6], action[6:12], action[12:]
+            else:
+                kp, delta = action[:6], action[6:]
             self.kp = np.clip(kp, self.kp_min, self.kp_max)
             self.kd = 2 * np.sqrt(self.kp)  # critically damped
         elif self.impedance_mode == "variable_full_kp":
@@ -397,7 +405,6 @@ class OperationalSpaceControllerFT(Controller):
 
         # filter ft measurements
         filtered_wrench = self.butterworth_filter(self.ee_ft, self.current_wrench, 2)
-        # filtered_wrench = self.current_wrench
 
         self.ee_ft.push(filtered_wrench)
         force_error = self.FT_reference - self.ee_ft.current
@@ -411,7 +418,7 @@ class OperationalSpaceControllerFT(Controller):
         desired_torque = np.dot(ori_error, orientation_kp) + np.multiply(vel_ori_error, self.kd[3:6])
 
         # TODO clip forces
-        F_active = self.PID(error=force_error, kp=self.kp_force, ki=self.ki_force, kd=np.zeros(6))  # + self.FT_reference
+        F_active = self.PID(error=force_error, kp=self.kp_force, ki=self.ki_force, kd=np.zeros(6))
         self.F_active.push(F_active)
 
         # Compute nullspace matrix (I - Jbar * J) and lambda matrices ((J * M^-1 * J^T)^-1)
@@ -510,11 +517,12 @@ class OperationalSpaceControllerFT(Controller):
             low = np.concatenate([self.kp_min, self.input_min])
             high = np.concatenate([self.kp_max, self.input_max])
         else:  # This is case "fixed"
-            if self.ft_ref_flag == True:
-                low = np.concatenate([self.ft_min, self.input_min])
-                high = np.concatenate([self.ft_max, self.input_max])
-            else:
-                low, high = self.input_min, self.input_max
+            low, high = self.input_min, self.input_max
+
+        if self.ft_ref_flag == True:
+            low = np.concatenate([low, self.ft_min])
+            high = np.concatenate([high, self.ft_max])
+
         return low, high
 
     @property

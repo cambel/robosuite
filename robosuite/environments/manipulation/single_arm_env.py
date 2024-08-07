@@ -57,7 +57,7 @@ class SingleArmEnv(ManipulationEnv):
         if self.env_configuration == "bimanual":
             return np.array(self.sim.data.site_xmat[self.sim.model.site_name2id(pf + "right_grip_site")]).reshape(3, 3)
         else:
-            return np.array(self.sim.data.site_xmat[self.sim.model.site_name2id(pf + "grip_site")]).reshape(3, 3)
+            return np.array(self.sim.data.get_body_xmat(self.robots[0].robot_model.eef_name))
 
     @property
     def _eef_xquat(self):

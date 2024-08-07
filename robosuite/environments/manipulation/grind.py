@@ -1,6 +1,5 @@
 import multiprocessing
 import numpy as np
-from scipy.spatial.distance import cdist
 
 from robosuite.environments.manipulation.single_arm_env import SingleArmEnv
 from robosuite.models.arenas import TableArena
@@ -10,20 +9,24 @@ from robosuite.utils.observables import Observable, sensor
 from robosuite.utils.placement_samplers import UniformRandomSampler
 from robosuite.utils.transform_utils import axisangle2quat, convert_quat, mat2quat
 from ur_control import spalg
-
+import rospkg
+import json
+import copy
 
 # Default Grind environment configuration
 DEFAULT_GRIND_CONFIG = {
     # settings for reward
     "task_complete_reward": 50.0,  # reward per task done
-    "grind_follow_reward": 10,  # reward for following the trajectory reference
-    "grind_push_reward": 0,  # reward for pushing into the mortar according to te force reference
+    "grind_follow_reward": 0.0025830969585508424,  # reward for following the trajectory reference
+    "grind_push_reward": 0.25830969585508424,  # reward for pushing into the mortar according to te force reference
     "quickness_reward": 0,  # reward for increased velocity
     "excess_accel_penalty": 0,  # penalty for end-effector accelerations over threshold
     "excess_force_penalty": 0,  # penalty for each step that the force is over the safety threshold
     "exit_task_space_penalty": 0,  # penalty for moving too far away from the mortar task space
     "bad_behavior_penalty": -100.0,  # the penalty received in case of early termination due to bad behavior
                                      # meaning one of the conditions from @termination_flag, collisions or joint limits
+    "force_follow_normalization": 50.0,  # max load (N)
+    "traj_follow_normalization": [0.027, 0.027, 0.085, 1, 1, 1],  # traj max? penalty?
 
     # settings for thresholds and flags
     "pressure_threshold_max": 20.0,  # maximum eef force allowed (N)
@@ -174,7 +177,7 @@ class Grind(SingleArmEnv):
         robots,
         env_configuration="default",
         controller_configs=None,
-        gripper_types="default",
+        gripper_types="Grinder",
         initialization_noise="default",
         table_full_size=(0.8, 0.8, 0.05),
         table_friction=(1.0, 5e-3, 1e-4),
@@ -206,10 +209,8 @@ class Grind(SingleArmEnv):
         log_dir="",
         evaluate=False,
         log_details=False,
-        action_indices=[0, 1, 2]
+        action_indices=range(0, 6)
     ):
-        # define the specific DOF to be controlling
-        self.action_indices = action_indices
 
         # Assert that the gripper type is Grinder
         assert (
@@ -227,6 +228,8 @@ class Grind(SingleArmEnv):
         self.reward_shaping = reward_shaping
         # Normalization factor = theoretical best episode return
         self.reward_normalization_factor = 1.0 / self.task_complete_reward
+        self.force_follow_normalization = self.task_config["force_follow_normalization"]
+        self.traj_follow_normalization = np.array(self.task_config["traj_follow_normalization"])
 
         self.grind_follow_reward = self.task_config["grind_follow_reward"]
         self.grind_push_reward = self.task_config["grind_push_reward"]
@@ -264,6 +267,7 @@ class Grind(SingleArmEnv):
         self.ref_traj = ref_traj
         self.ref_force = ref_force
 
+        self.traj_len = None
         # Assert that if both reference trajectory and reference force are given, they have the same length
         if self.ref_force is np.ndarray and self.ref_traj is np.ndarray:
             assert (
@@ -271,16 +275,21 @@ class Grind(SingleArmEnv):
             ), "Please input reference trajectory and reference force with the same dimensions"
 
         # Assert that if at least one reference given it has enough waypoints for finishing in @horizon timesteps
-        if isinstance(self.ref_force, np.ndarray) or isinstance(self.ref_traj, np.ndarray):
+        if isinstance(self.ref_force, np.ndarray) or isinstance(self.ref_traj, list):
             try:
                 self.traj_len = self.ref_force.shape[1]
 
             except:
-                self.traj_len = self.ref_traj.shape[1]
+                self.traj_len = len(self.ref_traj)
 
             assert (
                 self.traj_len <= self.horizon
             ), "Reference trajectory or force cannot be completed in the specified horizon"
+
+        if self.traj_len is not None:
+            print("Environment received at least one type of pre-defined reference")
+        else:
+            print("Continue without the environment access to predefined full reference")
 
         # ee resets
         self.ee_force_bias = np.zeros(3)
@@ -307,6 +316,10 @@ class Grind(SingleArmEnv):
         self.current_ref = []
         self.sum_action = []
         self.current_pos = []
+        self.current_force_ref = []
+        self.current_force = []
+        self.force_reward = []
+        self.position_reward = []
 
         super().__init__(
             robots=robots,
@@ -335,31 +348,68 @@ class Grind(SingleArmEnv):
             renderer_config=renderer_config,
         )
 
-    def step(self, action):
-        assert len(action) == len(self.action_indices), f"Size of action {len(action)} does not match expected {len(self.action_indices)}"
+        # define the specific DOF to be controlling TODO make this cleaner
+        # self.action_indices is based on action_indices param (these mention which of the 6 axes we're interested in adding the agent on)
+        # self.action indices is however changes based on the dimension (if any) of the variable impedance actions, which come first in the list of actions
+        # self.full_indices_actions contain the variable impedance indices(if any) together with the position action indices and with the force action indices at the end (if any)
 
-        try:
+        if self.robots[0].controller.impedance_mode == "fixed":
+            self.contr_impedance_index = 0
+            self.action_indices = action_indices
+            self.full_action_indices = copy.deepcopy(action_indices)
+        elif self.robots[0].controller.impedance_mode == "variable":
+            self.contr_impedance_index = 12
+        elif self.robots[0].controller.impedance_mode == "variable_kp":
+            self.contr_impedance_index = 6
+
+        self.action_indices = [self.contr_impedance_index+item for item in action_indices]
+        self.full_action_indices = list(range(self.contr_impedance_index)) + self.action_indices
+
+        # if we want to send force as actions to the controller, they are always at the end of the action list
+        if self.robots[0].controller.ft_ref_flag == True:
+            self.full_action_indices += [self.action_indices[-1] + 1 + item for item in list(range(6))]
+            self.contr_force_index = 6
+        else:
+            self.contr_force_index = 0
+
+    def step(self, action):
+
+        assert len(action) == len(self.action_indices)+self.contr_force_index+self.contr_impedance_index, f"Size of action {len(action)} does not match expected {len(self.action_indices)+self.contr_force_index+self.contr_impedance_index}"
+
+        if self.traj_len is not None:
+
+            current_waypoint = self.timestep % self.traj_len
 
             # online tracking of the reference trajectory
             residual_action = self._compute_relative_distance()
 
             # add policy action
-            scaled_action = np.interp(action, [-1, 1], [-0.05, 0.05])  # kind of linear mapping to controller.json min max output
-            # scaled_action[2:] *= 0.0
-            # let z be taken only from the residual action
-            # scaled_action[2] = 0.0
+            scaled_action = np.zeros(self.contr_impedance_index+6)
+
+            # add policy action (depending on the impedance mode) TODO make cleaner
+            if self.robots[0].controller.impedance_mode == "fixed":
+                scaled_action = np.interp(action, [-1, 1], [-0.05, 0.05])  # kind of linear mapping to controller.json min max output
+            elif self.robots[0].controller.impedance_mode == "variable_kp":
+                scaled_action[:6] = np.interp(action[:6], [-1, 1], [10, 2000])  # kind of linear mapping to controller.json min max output
+                scaled_action[self.action_indices] = np.interp(action[self.action_indices], [-1, 1], [-0.05, 0.05])  # kind of linear mapping to controller.json min max gain
+            elif self.robots[0].controller.impedance_mode == "variable":
+                scaled_action[:6] = np.interp(action[:6], [-1, 1], [0, 10])  # kind of linear mapping to controller.json min max damping
+                scaled_action[6:12] = np.interp(action[6:12], [-1, 1], [10, 2000])  # kind of linear mapping to controller.json min max gain
+                scaled_action[self.action_indices] = np.interp(action[self.action_indices], [-1, 1], [-0.05, 0.05])  # kind of linear mapping to controller.json min max output
 
             if self.log_details:
-                current_waypoint = self.timestep % self.traj_len
                 # save variables during training
                 self.timesteps.append(self.timestep)
                 self.waypoint.append(current_waypoint)
                 self.action_in.append(action)
                 self.res_action.append(residual_action)
                 self.scl_action.append(scaled_action)
-                self.current_ref.append(self.ref_traj[:, current_waypoint])
-                self.sum_action.append(residual_action + scaled_action)
+                self.current_ref.append(self.ref_traj[current_waypoint])
                 self.current_pos.append(self.robots[0].controller.ee_pos)
+
+                if self.ref_force is not None:
+                    self.current_force_ref.append(self.ref_force[:3, current_waypoint])
+                    self.current_force.append(self.robots[0].controller.ee_ft.current[:3])
 
                 if self.evaluate:
                     log_filename = self.log_dir + "/step_actions_eval.npz"
@@ -374,26 +424,52 @@ class Grind(SingleArmEnv):
                     res_action=self.res_action,
                     scl_action=self.scl_action,
                     crnt_ref=self.current_ref,
-                    sum_action=self.sum_action,
-                    crnt_pos=self.current_pos
+                    crnt_pos=self.current_pos,
+                    crnt_f_ref=self.current_force_ref,
+                    crnt_f=self.current_force,
+                    f_rew=self.force_reward,
+                    p_rew=self.position_reward
                 )
-            action = residual_action
-            action[self.action_indices] += scaled_action
+
+            # TODO create the action in a cleaner fashion
+
+            # in case of var imp, concatenate the scaled before the position part
+            if self.contr_impedance_index != 0:
+                action = np.concatenate([scaled_action[:self.contr_impedance_index], copy.deepcopy(residual_action)])
+            else:
+                action = copy.deepcopy(residual_action)
+
+            # Adding the agent policy action
+            action[self.action_indices] += scaled_action[self.action_indices]
+
+            # give the controller the force reference for the current timestep TODO make it more general, to work in the case of not knowing the full force ref beforehand?
+            if self.robots[0].controller.ft_ref_flag == True:
+                action = np.concatenate([action, self.ref_force[:,current_waypoint]])
+
             return super().step(action)
-        except:
+        else:
             return super().step(action)
 
     def _compute_relative_distance(self):
         relative_distance = np.zeros(6)
         if self.ref_traj is not None:
             current_waypoint = self.timestep % self.traj_len
-            relative_distance[:3] = self.ref_traj[:3, current_waypoint] - self.robots[0].controller.ee_pos
-            ee_quat = mat2quat(self.robots[0].controller.ee_ori_mat)
-            ref_quat = axisangle2quat(self.ref_traj[3:, current_waypoint])
-            relative_distance[3:] = spalg.quaternions_orientation_error(ref_quat, ee_quat)
+            relative_distance[:3] = self.ref_traj[current_waypoint][:3] - self._eef_xpos
+            ref_quat = self.ref_traj[current_waypoint][3:]
+            relative_distance[3:] = spalg.quaternions_orientation_error(ref_quat, self._eef_xquat)
             return relative_distance
         else:
             return relative_distance
+
+    def _compute_relative_wrenches(self):
+        relative_wrench = np.zeros(6)
+        if self.ref_force is not None:
+            current_waypoint = self.timestep % self.traj_len
+            # normalized by max load; ee_ft from controller already filtered
+            relative_wrench = (self.ref_force[:, current_waypoint] - self.robots[0].controller.ee_ft.current)/self.force_follow_normalization
+            return relative_wrench
+        else:
+            return relative_wrench
 
     def reward(self, action=None):
         """
@@ -468,18 +544,20 @@ class Grind(SingleArmEnv):
                     current_waypoint = self.timestep % self.traj_len
 
                     # Reward for pushing into mortar with desired linear forces
-                    # if self.ref_force is not None:
-                    #     ee_ft = self.robots[0].controller.ee_ft.current[:3]
-                    #     distance_from_ref_force = np.linalg.norm(self.ref_force[:3, current_waypoint] - ee_ft)
-                    #     reward -= self.grind_push_reward * distance_from_ref_force
+                    if self.ref_force is not None:
+                        distance_from_ref_force = np.linalg.norm(self._compute_relative_wrenches()[self.action_indices])
+                        reward -= self.grind_push_reward * distance_from_ref_force
+                        self.force_reward.append(- self.grind_push_reward * distance_from_ref_force)
 
                     # Reward for following desired linear trajectory
                     if self.ref_traj is not None:
-                        distance_from_ref_traj = np.linalg.norm(self._compute_relative_distance()[:3])
+                        distance_from_ref_traj = self._compute_relative_distance()[self.action_indices]/self.traj_follow_normalization[self.action_indices]  # normalize
+                        distance_from_ref_traj = np.linalg.norm(distance_from_ref_traj)
                         reward -= self.grind_follow_reward * distance_from_ref_traj
-                        # print("d", distance_from_ref_traj, reward)
+                        self.position_reward.append(-self.grind_follow_reward * distance_from_ref_traj)
+
                 except:
-                    pass  # situation when no ref given but why would you do that to it
+                    pass  # situation when no full pre-defined ref given
 
                 # # Reward for increased linear velocity
                 # reward += self.quickness_reward * np.mean(abs(self.robots[0].recent_ee_vel.current[:3]))
@@ -540,7 +618,13 @@ class Grind(SingleArmEnv):
         # Adjust base pose accordingly
         xpos = self.robots[0].robot_model.base_xpos_offset["table"](self.table_full_size[0])
         self.robots[0].robot_model.set_base_xpos(xpos)
-        self.robots[0].init_qpos = np.array([-0.242, -0.867, 1.993, -2.697, -1.571, -1.812])
+
+        # (For UR5e) specific starting point
+        if self.robots[0].name == "UR5e":
+            ros_pack = rospkg.RosPack()
+            qpos_init_file = ros_pack.get_path("osx_powder_grinding") + "/config/ur5e_init_qpos.json"
+            init_joints = json.load(open(qpos_init_file))["init_q"]
+            self.robots[0].init_qpos = np.array(init_joints)
 
         # load model for table top workspace
         mujoco_arena = TableArena(
@@ -609,7 +693,11 @@ class Grind(SingleArmEnv):
 
         @sensor(modality=f"{pf}proprio")
         def robot0_relative_pose(obs_cache):
-            return self._compute_relative_distance()
+            return self._compute_relative_distance()/self.traj_follow_normalization
+
+        @sensor(modality=f"{pf}proprio")
+        def robot0_relative_wrench(obs_cache):
+            return self._compute_relative_wrenches()
 
         # needed in the list of observables
         @sensor(modality=f"{pf}proprio")
@@ -647,7 +735,7 @@ class Grind(SingleArmEnv):
                     else np.zeros(3)
                 )
 
-            sensors = [mortar_pos, mortar_quat, gripper_to_mortar_pos, robot0_eef_force, robot0_eef_torque, robot0_relative_pose]
+            sensors = [mortar_pos, mortar_quat, gripper_to_mortar_pos, robot0_eef_force, robot0_eef_torque, robot0_relative_pose, robot0_relative_wrench]
             names = [s.__name__ for s in sensors]
 
             # Create observables
@@ -816,9 +904,10 @@ class Grind(SingleArmEnv):
                 - (np.array) maximum (high) action values
         """
         low, high = [], []
+
         for robot in self.robots:
             lo, hi = robot.action_limits
-            low, high = np.concatenate([low, lo[self.action_indices]]), np.concatenate([high, hi[self.action_indices]])
+            low, high = np.concatenate([low, lo[self.full_action_indices]]), np.concatenate([high, hi[self.full_action_indices]])
         return low, high
 
     @property

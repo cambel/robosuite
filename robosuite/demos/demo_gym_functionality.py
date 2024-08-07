@@ -28,7 +28,9 @@ To adapt our APIs to be compatible with OpenAI Gym's style, this script
 demonstrates how this can be easily achieved by using the GymWrapper.
 
 
-! Changed such that code works with gym, not gymnasium
+! Changed such that code works with gym, not gymnasium: additionally, code works with stable-baselines3 v1.6.2,
+later versions will ask for an extra truncated argument from the env.step() function
+TODO check OpenGL warnings
 """
 
 import robosuite as suite
@@ -39,9 +41,9 @@ if __name__ == "__main__":
     # Notice how the environment is wrapped by the wrapper
     env = GymWrapper(
         suite.make(
-            env_name="Grind",
-            robots="UR5e",
-            gripper_types="Grinder",
+            env_name="Lift",
+            robots="Panda",
+            gripper_types="PandaGripper",
             use_camera_obs=False,  # do not use pixel observations
             has_offscreen_renderer=False,  # not needed since not using pixel obs
             has_renderer=True,  # make sure we can render to the screen
@@ -51,15 +53,15 @@ if __name__ == "__main__":
     )
 
     env.reset(seed=0)
-
-    for i_episode in range(20):
+    ep_nr = 2
+    for i_episode in range(ep_nr):
         observation = env.reset()
-        for t in range(500):
+        for t in range(1000):
             env.render()
             action = env.action_space.sample()
-            observation, reward, terminated, truncated, info = env.step(action)
-            if terminated or truncated:
-                print("Episode finished after {} timesteps".format(t + 1))
-                observation, info = env.reset()
+            observation, reward, done, info = env.step(action)
+            if done:
+                print(f"Episode {i_episode+1} out of {ep_nr} finished after {t+1} timesteps")
+                observation = env.reset()
                 env.close()
                 break

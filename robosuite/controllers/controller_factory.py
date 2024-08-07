@@ -13,6 +13,7 @@ from .joint_tor import JointTorqueController
 from .joint_vel import JointVelocityController
 from .osc import OperationalSpaceController
 from .oscFT import OperationalSpaceControllerFT
+from .compliance import ComplianceController
 
 
 # Global var for linking pybullet server to multiple ik controller instances if necessary
@@ -120,6 +121,14 @@ def controller_factory(name, params):
             policy_freq=params["policy_freq"],
             ramp_ratio=params["ramp_ratio"],
         )
+
+    if name == "COMPLIANCE":
+        ori_interpolator = None
+        if interpolator is not None:
+            interpolator.set_states(dim=3)  # EE control uses dim 3 for pos and ori each
+            ori_interpolator = deepcopy(interpolator)
+            ori_interpolator.set_states(ori="euler")
+        return ComplianceController(interpolator_pos=interpolator, interpolator_ori=ori_interpolator, **params)
 
     if name == "OSC_POSE":
         ori_interpolator = None
