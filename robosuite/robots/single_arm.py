@@ -237,7 +237,7 @@ class SingleArm(Manipulator):
 
         gripper_action = None
         if self.has_gripper:
-            gripper_action = action[self.controller.control_dim :]  # all indexes past controller dimension indexes
+            gripper_action = action[self.controller.control_dim:]  # all indexes past controller dimension indexes
             arm_action = action[: self.controller.control_dim]
         else:
             arm_action = action
@@ -338,9 +338,14 @@ class SingleArm(Manipulator):
             def gripper_qvel(obs_cache):
                 return np.array([self.sim.data.qvel[x] for x in self._ref_gripper_joint_vel_indexes])
 
-            sensors += [gripper_qpos, gripper_qvel]
-            names += [f"{pf}gripper_qpos", f"{pf}gripper_qvel"]
-            actives += [True, True]
+            @sensor(modality=modality)
+            def ee_force_torque(obs_cache):
+                """ Force/Torque in the robot's base frame """
+                return np.concatenate((T.force_in_A_to_force_in_B(self.ee_force, self.ee_torque, self._hand_pose)))
+
+            sensors += [gripper_qpos, gripper_qvel, ee_force_torque]
+            names += [f"{pf}gripper_qpos", f"{pf}gripper_qvel", f"{pf}eef_force_torque"]
+            actives += [True, True, True]
 
         # Create observables for this robot
         for name, s, active in zip(names, sensors, actives):
