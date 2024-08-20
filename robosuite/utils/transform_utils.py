@@ -969,3 +969,27 @@ def cholesky_vector_to_spd(cholesky_vector):
     for i in range(6):
         cholesky_matrix[mask[0][i]][mask[1][i]] = cholesky_vector[i]
     return cholesky_matrix @ cholesky_matrix.T
+
+
+def ortho62quat(ortho6):
+    R = ortho62mat(ortho6)
+    return mat2quat(R)
+
+
+def axis_angle2ortho6(axis_angle):
+    return quat2ortho6(axisangle2quat(axis_angle))
+
+
+def quat2ortho6(q):
+    R = quat2mat(q)
+    return R[:3, :2].T.flatten()
+
+
+def ortho62mat(ortho6):
+    x_raw, y_raw = ortho6[0:3], ortho6[3:6]
+    x = x_raw / np.linalg.norm(x_raw)
+    z = np.cross(x, y_raw)
+    z = z / np.linalg.norm(z)
+    y = np.cross(z, x)
+
+    return np.column_stack((x, y, z))
