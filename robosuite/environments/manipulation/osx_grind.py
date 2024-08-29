@@ -823,24 +823,27 @@ class OSXGrind(SingleArmEnv):
             self.log_dict['details']['kp'].append(self.robots[0].controller.kp.copy())
 
             if self.evaluate:
-                log_filename = self.log_dir + "/step_actions_eval.npz"
+                self.log_filename = self.log_dir + "/step_actions_eval.npz"
+                self._save_details()
             else:
-                log_filename = self.log_dir + "/step_actions.npz"
+                self.log_filename = self.log_dir + "/step_actions.npz"
 
-            np.savez(
-                log_filename,
-                timesteps=self.log_dict['details']['timesteps'],
-                waypoint=self.log_dict['details']['waypoint'],
-                action_in=self.log_dict['details']['action_in'],
-                res_action=self.log_dict['details']['res_action'],
-                scl_action=self.log_dict['details']['scl_action'],
-                crnt_ref=self.log_dict['details']['current_ref'],
-                crnt_pos=self.log_dict['details']['current_pos'],
-                crnt_quat=self.log_dict['details']['current_quat'],
-                crnt_f_ref=self.log_dict['details']['current_force_ref'],
-                crnt_f_ref_eef=self.log_dict['details']['current_force_ref_eef_frame'],
-                crnt_f_eef=self.log_dict['details']['current_force_eef_frame'],
-                crnt_f=self.log_dict['details']['current_force'],
-                f_rew=self.log_dict['rewards']['force_error'],
-                p_rew=self.log_dict['rewards']['traj_error']
-            )
+    def _save_details(self):
+        np.savez(
+            self.log_filename,
+            timesteps=self.log_dict['details']['timesteps'],
+            waypoint=self.log_dict['details']['waypoint'],
+            action_in=self.log_dict['details']['action_in'],
+            res_action=self.log_dict['details']['res_action'],
+            scl_action=self.log_dict['details']['scl_action'],
+            crnt_ref=self.log_dict['details']['current_ref'],
+            crnt_pos=self.log_dict['details']['current_pos'],
+            crnt_quat=self.log_dict['details']['current_quat'],
+            crnt_f_ref=self.log_dict['details']['current_force_ref'],
+            crnt_f_ref_eef=self.log_dict['details']['current_force_ref_eef_frame'],
+            crnt_f_eef=self.log_dict['details']['current_force_eef_frame'],
+            crnt_f=self.log_dict['details']['current_force'],
+            contr_kp=self.log_dict['details']['kp'],
+            f_rew=self.log_dict['rewards']['force_error'],
+            p_rew=self.log_dict['rewards']['traj_error']
+        )
