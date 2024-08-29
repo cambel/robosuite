@@ -10,6 +10,7 @@ from robosuite.models.tasks import ManipulationTask
 from robosuite.utils.observables import Observable, sensor
 from robosuite.utils.placement_samplers import UniformRandomSampler
 import robosuite.utils.transform_utils as T
+from ur_control.traj_utils import compute_trajectory
 
 from ur_control import spalg
 import rospkg
@@ -634,11 +635,91 @@ class OSXGrind(SingleArmEnv):
             for obj_pos, obj_quat, obj in object_placements.values():
                 self.sim.data.set_joint_qpos(obj.joints[0], np.concatenate([np.array(obj_pos), np.array(obj_quat)]))
 
-        self.current_waypoint_index = 0
+        # recompute the referece trajectory for each episode, with height dependent on radius
+        y = np.array([0.026, 0.027, 0.03, 0.032])
+        x = np.array([0.008, 0.01, 0.012, 0.015])
+        coefficients = np.polyfit(x, y, deg=2)
+        f = np.poly1d(coefficients)
 
+        R = 0.01 * np.random.random_sample() + 0.008 # take a random radius inside the mortar
+        self.num_waypoints = np.random.randint(low=100, high=500) # take a random number of points for the trajectory
+        reference_trajectory, self.reference_force = self.recompute_trajectory(R, f(R), self.num_waypoints)
+        reference_trajectory = np.append(reference_trajectory, [reference_trajectory[-1]], axis=0)
+        self.reference_trajectory = reference_trajectory
+        self.trajectory_len = len(self.reference_trajectory)
+
+        self.current_waypoint_index = 0
         self.collisions = 0
         self.f_excess = 0
         self.task_space_exits = 0
+
+    def recompute_trajectory(self, R, h, num_waypoints):
+        # Compute reference trajectory and reference force profile
+
+        # mortar surface function and derivatives
+        def fx(x, y): return 4*x**3 * 11445.39  + y**2 * 2*x * 22890.7 + 2*x * 3.11558
+        def fy(x, y): return 4*y**3 * 11445.39  + 2*y * x**2 * 22890.7 + 2*y * 3.11558
+
+        def get_orientation_quaternion_smooth(n, prev_quat=None, prev_R=None):
+            if prev_R is None:
+                # If no previous rotation
+                R = np.zeros((3, 3))
+                R[:, 2] = n
+                R[:, 0] = np.cross([0, 1, 0], n)
+                R[:, 0] /= np.linalg.norm(R[:, 0])
+                R[:, 1] = np.cross(n, R[:, 0])
+            else:
+                # If we have a previous rotation, try to minimize the change
+                R = prev_R.copy()
+                R[:, 2] = n  # Set the new normal
+                R[:, 1] = np.cross(n, R[:, 0])  # Adjust the y-axis
+                R[:, 1] /= np.linalg.norm(R[:, 1])
+                R[:, 0] = np.cross(R[:, 1], n)  # Adjust the x-axis
+
+            quat = T.mat2quat(R)
+
+            # Ensure consistent quaternion sign
+            if prev_quat is not None and np.dot(quat, prev_quat) < 0:
+                quat = -quat
+
+            return quat, R
+
+        h = np.clip(h, 0.01, 0.04) # make sure it's still inside the mortar as height
+        table_height = 0.8
+        initial_pose = [0.0, R, table_height+h, 0.0, 0.9990052, 0.04459406, 0.0]
+
+        ref_traj = compute_trajectory(initial_pose,
+                                        plane='XY',
+                                        radius=R,
+                                        radius_direction='-Y',
+                                        steps=num_waypoints,
+                                        revolutions=1, from_center=False, trajectory_type='circular')
+
+        ind = 0
+
+        # recalculate orientation in every point to be perpendicular to surface;
+        for point in ref_traj:
+            # point to evaluate in
+            px, py = point[0], point[1]
+
+            # calculate the normal and tangents vectors to the surface of the mortar
+            n = np.array([fx(px, py), fy(px, py), -1])
+            normal_vect_direction = n/np.linalg.norm(n)
+
+            try:
+                quat_ref, R = get_orientation_quaternion_smooth(normal_vect_direction, quat_ref, R)
+            except:
+                # first point won't have a rotation matrix to refer to
+                quat_ref, R = get_orientation_quaternion_smooth(normal_vect_direction)
+
+            ref_traj[ind,3:] = quat_ref
+            ind+=1
+
+        load_N = np.random.randint(low=1, high=20) # take a random force reference
+        ref_force = np.array([[0, 0, load_N, 0, 0, 0]]*num_waypoints)
+
+
+        return ref_traj, ref_force
 
     def _post_action(self, action):
         """
