@@ -2,7 +2,6 @@ import multiprocessing
 import numpy as np
 import math as m
 import scipy.spatial as spsp
-from torch import norm
 
 from robosuite.environments.manipulation.single_arm_env import SingleArmEnv
 from robosuite.models.arenas import TableArena
@@ -301,6 +300,7 @@ class OSXGrind(SingleArmEnv):
                 'current_pos': [],
                 'current_quat': [],
                 'current_force_ref': [],
+                'kp': [],
                 'current_force': [],
                 'current_force_ref_eef_frame': [],
                 'current_force_eef_frame': [],
@@ -335,19 +335,23 @@ class OSXGrind(SingleArmEnv):
         )
 
     def step(self, action):
+
         assert len(action) == len(self.action_indices), \
             f"Size of action {len(action)} does not match expected {len(self.action_indices)}"
 
+        action_kp = np.interp(action, [-1,1], [0.001, 0.5]) # limits for kp (action from sac)
+        # change controller params
+        self.robots[0].controller.kp[self.action_indices] = action_kp[self.action_indices]
+
         pos_rot_action = np.zeros(6)
-        pos_rot_action[self.action_indices] = action
 
         if self.reference_force is not None:
             if self.robots[0].controller.desired_ft_frame == "hand":
                 # If i receive a reference in the gripper frame directly, change it to base frame
                 gripper_in_robot_base = self.robots[0].controller.pose_in_base_from_name(f"{self.robots[0].controller.ft_prefix}_eef")
                 ee_force, ee_torque = T.force_in_A_to_force_in_B(self.reference_force[self.current_waypoint_index][:3],
-                                                                 self.reference_force[self.current_waypoint_index][3:],
-                                                                 gripper_in_robot_base)
+                                                                self.reference_force[self.current_waypoint_index][3:],
+                                                                gripper_in_robot_base) #TODO replace with spalg.convert_wrench 
 
                 self.ft_action = np.concatenate([ee_force, ee_torque])
 
@@ -659,13 +663,13 @@ class OSXGrind(SingleArmEnv):
                 if self.tracking_error < self.tracking_trajectory_threshold:
                     self.current_waypoint_index += 1
 
-        # Add termination criteria
-        if done and self.print_results:
-            print("Max steps per episode reached")
-
         # allow episode to finish early if allowed
         if self.early_terminations:
             done = done or self._check_terminated()
+
+        # Add termination criteria
+        if done and self.print_results:
+            print("Max steps per episode reached")
 
         return reward, done, info
 
@@ -735,7 +739,7 @@ class OSXGrind(SingleArmEnv):
             bool: True completed task
         """
 
-        return self.current_waypoint_index == self.trajectory_len - 1
+        return self.current_waypoint_index +2 == self.trajectory_len
 
     def _check_task_space_limits(self):
         """
@@ -814,6 +818,9 @@ class OSXGrind(SingleArmEnv):
             # TODO separate case hand from base
             self.log_dict['details']['current_force_ref_eef_frame'].append(self.reference_force[self.current_waypoint_index])
             self.log_dict['details']['current_force_eef_frame'].append(self.robots[0].controller.eef_wrench_buf.average)
+
+            # controller params
+            self.log_dict['details']['kp'].append(self.robots[0].controller.kp.copy())
 
             if self.evaluate:
                 log_filename = self.log_dir + "/step_actions_eval.npz"
