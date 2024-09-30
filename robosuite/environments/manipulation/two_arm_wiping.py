@@ -22,10 +22,7 @@ DEFAULT_WIPE_CONFIG = {
     "distance_multiplier": 5.0,  # multiplier for the dense reward inversely proportional to the mean location of the pegs to wipe
     "distance_th_multiplier": 5.0,  # multiplier in the tanh function for the aforementioned reward
     # settings for table top
-    "table_full_size": [0.5, 0.8, 0.05],  # Size of tabletop
-    "table_offset": [0.15, 0, 0.9],  # Offset of table (z dimension defines max height of table)
     "table_friction": [0.03, 0.005, 0.0001],  # Friction parameters for the table
-    "table_friction_std": 0,  # Standard deviation to sample different friction parameters for the table each episode
     "table_height": 0.0,  # Additional height of the table over the default location
     "table_height_std": 0.0,  # Standard deviation to sample different heigths of the table each episode
     "line_width": 0.04,  # Width of the line to wipe (diameter of the pegs)
@@ -43,6 +40,7 @@ DEFAULT_WIPE_CONFIG = {
     "use_contact_obs": True,  # if we use a binary observation for whether robot is in contact or not
     "early_terminations": True,  # Whether we allow for early terminations or not
     "use_condensed_obj_obs": True,  # Whether to use condensed object observation representation (only applicable if obj obs is active)
+    "spawn_hammer": True,  # whether to spawn a hammer on top of the wiping marks
 }
 
 
@@ -92,8 +90,6 @@ class TwoArmWiping(TwoArmEnv):
 
             :Note: Specifying "default" will automatically use the default noise settings.
                 Specifying None will automatically create the required dict with "magnitude" set to 0.0.
-
-        table_full_size (3-tuple): x, y, and z dimensions of the table.
 
         table_friction (3-tuple): the three mujoco friction parameters for
             the table.
@@ -182,7 +178,6 @@ class TwoArmWiping(TwoArmEnv):
         self,
         controller_configs=None,
         initialization_noise="default",
-        table_full_size=(0.8, 0.8, 0.05),
         table_friction=(1.0, 5e-3, 1e-4),
         use_camera_obs=True,
         use_object_obs=True,
@@ -206,6 +201,7 @@ class TwoArmWiping(TwoArmEnv):
         camera_segmentations=None,  # {None, instance, class, element}
         renderer="mujoco",
         renderer_config=None,
+        task_config=DEFAULT_WIPE_CONFIG,
         ** kwargs,
     ):
 
@@ -217,16 +213,13 @@ class TwoArmWiping(TwoArmEnv):
         controller_configs[0]['ft_offset'] = [0.020261524133659645, -0.016895182735402466, -5.647517962429485, -0.7549887226522703, 1.8965845836510595, -0.008382508154314046]
         controller_configs[1]['ft_offset'] = [0.0047686808817857685, -0.005253487193424327, 0.29421446353800523, -0.03327892696320982, 0.11025708260598158, 0.002508138945165534]
 
-        # settings for table top
-        self.table_full_size = table_full_size
-        self.table_friction = table_friction
-        self.table_offset = np.array((0.10, 0.0, 0.9))
-
         # Get config
-        self.task_config = DEFAULT_WIPE_CONFIG
+        self.task_config = task_config
+
+        # settings for table top
+        self.table_friction = table_friction
 
         # Set task-specific parameters
-
         # settings for the reward
         self.reward_scale = reward_scale
         self.reward_shaping = reward_shaping
@@ -264,6 +257,7 @@ class TwoArmWiping(TwoArmEnv):
         self.use_contact_obs = self.task_config["use_contact_obs"]
         self.early_terminations = self.task_config["early_terminations"]
         self.use_condensed_obj_obs = self.task_config["use_condensed_obj_obs"]
+        self.spawn_hammer = self.task_config["spawn_hammer"]
 
         # Scale reward if desired (see reward method for details)
         self.reward_normalization_factor = horizon / (
@@ -519,6 +513,7 @@ class TwoArmWiping(TwoArmEnv):
 
         # load model for table top workspace
         mujoco_arena = OSXWipeArena(
+            table_friction=self.table_friction,
             wiping_area=(0.10, 0.10, 0.05),
             center_pose=[-0.175, 0.0],
             num_markers=10,
@@ -531,28 +526,31 @@ class TwoArmWiping(TwoArmEnv):
         # Arena always gets set to zero origin
         mujoco_arena.set_origin([0, 0, 0])
 
-        # initialize objects of interest
-        self.hammer = HammerObject(
-            name="pot",
-            handle_radius=(0.01, 0.015),
-            handle_length=(0.1, 0.125))
+        if self.spawn_hammer:
+            # initialize objects of interest
+            self.hammer = HammerObject(
+                name="hammer",
+                handle_radius=(0.01, 0.015),
+                handle_length=(0.1, 0.125))
 
-        # Create placement initializer
-        if self.placement_initializer is not None:
-            self.placement_initializer.reset()
-            self.placement_initializer.add_objects(self.hammer)
+            # Create placement initializer
+            if self.placement_initializer is not None:
+                self.placement_initializer.reset()
+                self.placement_initializer.add_objects(self.hammer)
+            else:
+                self.placement_initializer = UniformRandomSampler(
+                    name="ObjectSampler",
+                    mujoco_objects=self.hammer,
+                    x_range=[0, 0],
+                    y_range=[0, 0],
+                    rotation=np.deg2rad([90, 105]),
+                    rotation_axis="y",
+                    ensure_object_boundary_in_range=False,
+                    ensure_valid_placement=True,
+                    reference_pos=np.array((-0.15, 0.0, 0.87)),
+                )
         else:
-            self.placement_initializer = UniformRandomSampler(
-                name="ObjectSampler",
-                mujoco_objects=self.hammer,
-                x_range=[0, 0],
-                y_range=[0, 0],
-                rotation=np.deg2rad([90, 105]),
-                rotation_axis="y",
-                ensure_object_boundary_in_range=False,
-                ensure_valid_placement=True,
-                reference_pos=np.array((-0.15, 0.0, 0.87)),
-            )
+            self.hammer = None
 
         # task includes arena, robot, and objects of interest
         self.model = ManipulationTask(
@@ -560,17 +558,6 @@ class TwoArmWiping(TwoArmEnv):
             mujoco_robots=[robot.robot_model for robot in self.robots],
             mujoco_objects=self.hammer,
         )
-
-    def _setup_references(self):
-        """
-        Sets up references to important components. A reference is typically an
-        index or a list of indices that point to the corresponding elements
-        in a flatten array, which is how MuJoCo stores physical simulation data.
-        """
-        super()._setup_references()
-
-        # Additional object references from this env
-        self.table_top_id = self.sim.model.site_name2id("table_top")
 
     def _setup_observables(self):
         """
@@ -703,14 +690,14 @@ class TwoArmWiping(TwoArmEnv):
             self.model.mujoco_arena.reset_arena(self.sim)
 
         # Reset all object positions using initializer sampler if we're not directly loading from an xml
-        if not self.deterministic_reset:
+            if self.spawn_hammer:
 
-            # Sample from the placement initializer for all objects
-            object_placements = self.placement_initializer.sample()
+                # Sample from the placement initializer for all objects
+                object_placements = self.placement_initializer.sample()
 
-            # Loop through all objects and reset their positions
-            for obj_pos, obj_quat, obj in object_placements.values():
-                self.sim.data.set_joint_qpos(obj.joints[0], np.concatenate([np.array(obj_pos), np.array(obj_quat)]))
+                # Loop through all objects and reset their positions
+                for obj_pos, obj_quat, obj in object_placements.values():
+                    self.sim.data.set_joint_qpos(obj.joints[0], np.concatenate([np.array(obj_pos), np.array(obj_quat)]))
 
     def visualize(self, vis_settings):
         """
@@ -843,26 +830,6 @@ class TwoArmWiping(TwoArmEnv):
             max_radius = np.max(np.linalg.norm(np.array(marker_positions) - wipe_centroid, axis=1))
         # Return all values
         return max_radius, wipe_centroid, mean_pos_to_things_to_wipe
-
-    @property
-    def _gripper0_to_handle0(self):
-        """
-        Calculate vector from the left gripper to the left pot handle.
-
-        Returns:
-            np.array: (dx,dy,dz) distance vector between handle and EEF0
-        """
-        return self._handle0_xpos - self._eef0_xpos
-
-    @property
-    def _gripper1_to_handle1(self):
-        """
-        Calculate vector from the right gripper to the right pot handle.
-
-        Returns:
-            np.array: (dx,dy,dz) distance vector between handle and EEF0
-        """
-        return self._handle1_xpos - self._eef1_xpos
 
     @property
     def _has_gripper_contact(self):

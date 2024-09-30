@@ -16,7 +16,8 @@ class OSXWipeArena(Arena):
             num_markers=10,
             line_width=0.02,
             center_pose=[-0.174, -0.14],
-            table_height = 0.8555 + 0.0025/2 + 0.003,
+            table_height=0.8555 + 0.0025/2 + 0.003,
+            table_friction=(1, 0.005, 0.0001),
             coverage_factor=0.9,
             two_clusters=False,
             seed=0,
@@ -36,6 +37,9 @@ class OSXWipeArena(Arena):
         self.two_clusters = two_clusters
         self.markers = []
 
+        self.table_collision = self.table_body.find("./geom[@name='base_fixture_0_collision']")
+        self.table_friction = table_friction
+
         # Load and configure the arena
         self.configure_location()
 
@@ -49,6 +53,9 @@ class OSXWipeArena(Arena):
 
         # Define dirt material for markers
         dirt = CustomMaterial(texture="Dirt", tex_name="dirt", mat_name="dirt_mat")
+
+        # Update physics parameters
+        self.table_collision.set("friction", array_to_string(self.table_friction))
 
         # Place visual markers
         for i in range(self.num_markers):
