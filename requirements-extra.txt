@@ -12,7 +12,7 @@ hidapi
 h5py
 
 # required for nvisii renderer
-open3d
+# open3d
 
 # required for gamepad
 inputs
