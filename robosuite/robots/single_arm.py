@@ -325,7 +325,7 @@ class SingleArm(Manipulator):
         sensors = [eef_pos, eef_quat, eef_vel_lin, eef_vel_ang, eef_axisangle]
         names = [f"{pf}eef_pos", f"{pf}eef_quat", f"{pf}eef_axisangle", f"{pf}eef_vel_lin", f"{pf}eef_vel_ang"]
         # Exclude eef vel by default
-        actives = [True, True, True, False, False]
+        actives = [True, True, True, True, True]
 
         # add in gripper sensors if this robot has a gripper
         if self.has_gripper:

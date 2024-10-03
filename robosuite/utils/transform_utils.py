@@ -963,7 +963,10 @@ def axis_angle2ortho6(axis_angle):
 
 
 def quat2ortho6(q):
-    R = quat2mat(q)
+    return mat2ortho6(quat2mat(q))
+
+
+def mat2ortho6(R):
     return R[:3, :2].T.flatten()
 
 

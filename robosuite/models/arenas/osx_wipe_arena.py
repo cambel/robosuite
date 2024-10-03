@@ -37,6 +37,7 @@ class OSXWipeArena(Arena):
         self.two_clusters = two_clusters
         self.markers = []
 
+        self.table_body = self.worldbody.find("./body[@name='workspace']")
         self.table_collision = self.table_body.find("./geom[@name='base_fixture_0_collision']")
         self.table_friction = table_friction
 
