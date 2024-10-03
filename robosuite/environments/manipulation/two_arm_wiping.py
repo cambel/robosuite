@@ -1,4 +1,4 @@
-from copy import deepcopy
+from copy import deepcopy, copy
 import multiprocessing
 import numpy as np
 from robosuite.models.arenas.osx_wipe_arena import OSXWipeArena
@@ -205,6 +205,8 @@ class TwoArmWiping(TwoArmEnv):
         ** kwargs,
     ):
 
+        self.controller_configs = controller_configs
+
         controller_configs = [
             deepcopy(controller_configs),
             deepcopy(controller_configs)
@@ -307,6 +309,45 @@ class TwoArmWiping(TwoArmEnv):
             renderer=renderer,
             renderer_config=renderer_config,
         )
+
+    def step(self, action_dict):
+        """
+            Format action to what the environment expects:
+            expected action: [robot0 stiffness, robot0 position, robot0 rotation axis angle/delta, robot0 gripper,
+                             robot1 stiffness, robot1 position, robot1 rotation axis angle/delta]
+
+            arg: `action_dict`: dict or list. 
+                If `dict`, expect lerobot format. 
+                If `list`, expect environment format
+        """
+        if isinstance(action_dict, dict):
+            action_d = copy(action_dict)  # do not modify original dict
+            action_d['action.rotation_axis_angle'] = [T.quat2axisangle(T.ortho62quat(rot)) for rot in action_d['action.rotation_ortho6']]
+            if self.controller_configs['type'] == 'JOINT_POSITION':
+                action = np.concatenate([
+                    action_d['action.position'][0],
+                    action_d['action.rotation_axis_angle'][0],
+                    action_d['action.gripper'],
+                    action_d['action.position'][1],
+                    action_d['action.rotation_axis_angle'][1],
+                ])
+            else:
+                stiffness_type = 'cholesky' if self.controller_configs['impedance_mode'] == 'variable_full_kp' else 'diag'
+                stiffness = action_d[f'action.stiffness_{stiffness_type}']
+
+                action = np.concatenate([
+                    stiffness[0],
+                    action_d['action.position'][0],
+                    action_d['action.rotation_axis_angle'][0],
+                    action_d['action.gripper'][0],
+                    stiffness[1],
+                    action_d['action.position'][1],
+                    action_d['action.rotation_axis_angle'][1],
+                ])
+        else:
+            action = action_dict
+
+        return super().step(action)
 
     def reward(self, action=None):
         """
