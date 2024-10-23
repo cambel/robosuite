@@ -322,25 +322,32 @@ class TwoArmWiping(TwoArmEnv):
         """
         if isinstance(action_dict, dict):
             action_d = copy(action_dict)  # do not modify original dict
-            action_d['action.rotation_axis_angle'] = [T.quat2axisangle(T.ortho62quat(rot)) for rot in action_d['action.rotation_ortho6']]
             if self.controller_configs['type'] == 'JOINT_POSITION':
+                action_d = split_actions(action_d)
+
                 action = np.concatenate([
+                    action_d['action.qpos'][0],
+                    action_d['action.gripper'],
+                    action_d['action.qpos'][1],
+                ])
+            else:
+                # Convert rotation to axis angle if necessary
+                if 'action.rotation_ortho6' in action_d:
+                    action_d['action.rotation_axis_angle'] = np.concatenate([T.quat2axisangle(T.ortho62quat(action_d['action.rotation_ortho6'][:6])),
+                                                                             T.quat2axisangle(T.ortho62quat(action_d['action.rotation_ortho6'][6:]))])
+
+                action_d = split_actions(action_d)
+
+                # Get the expected stiffness format depending on the controller's impedance mode
+                stiffness_type = 'cholesky' if self.controller_configs['impedance_mode'] == 'variable_full_kp' else 'diag'
+                stiffness_key = f'action.stiffness_{stiffness_type}'
+
+                action = np.concatenate([
+                    action_d[stiffness_key][0],
                     action_d['action.position'][0],
                     action_d['action.rotation_axis_angle'][0],
                     action_d['action.gripper'],
-                    action_d['action.position'][1],
-                    action_d['action.rotation_axis_angle'][1],
-                ])
-            else:
-                stiffness_type = 'cholesky' if self.controller_configs['impedance_mode'] == 'variable_full_kp' else 'diag'
-                stiffness = action_d[f'action.stiffness_{stiffness_type}']
-
-                action = np.concatenate([
-                    stiffness[0],
-                    action_d['action.position'][0],
-                    action_d['action.rotation_axis_angle'][0],
-                    action_d['action.gripper'][0],
-                    stiffness[1],
+                    action_d[stiffness_key][1],
                     action_d['action.position'][1],
                     action_d['action.rotation_axis_angle'][1],
                 ])
@@ -882,3 +889,16 @@ class TwoArmWiping(TwoArmEnv):
             bool: True if contact is surpasses given threshold magnitude
         """
         return np.linalg.norm(self.robots[1].ee_force - self.ee_force_bias) > self.contact_threshold
+
+
+def split_actions(action_dict: dict):
+    """
+        Expect data for a bimanual set up so let's split the data
+    """
+    res = copy(action_dict)
+    for key, value in action_dict.items():
+        if len(value) % 2 == 0:
+            res[key] = np.split(value, 2)
+        else:
+            res[key] = value
+    return res
