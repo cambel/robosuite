@@ -3,7 +3,7 @@ import numpy as np
 import math as m
 import scipy.spatial as spsp
 
-from robosuite.environments.manipulation.single_arm_env import SingleArmEnv
+from robosuite.environments.manipulation.manipulation_env import ManipulationEnv
 from robosuite.models.arenas import TableArena
 from robosuite.models.objects import MortarObject, CylinderObject
 from robosuite.models.tasks import ManipulationTask
@@ -30,6 +30,9 @@ DEFAULT_GRIND_CONFIG = {
 
     "force_follow_normalization": [50.0, 50.0, 50.0, 10.0, 10.0, 10.0],  # max load (N)
     "traj_follow_normalization": [0.01, 0.01, 0.01, 0.1, 0.1, 0.1],  # max distance between waypoints
+
+    "table_full_size": [0.8, 0.8, 0.05],
+    "table_friction": [1.0, 5e-3, 1e-4],
 
     # settings for thresholds
     "force_torque_limits": [50.0, 50.0, 50.0, 10.0, 10.0, 10.0],  # maximum eef force/torque allowed (N | N/m)
@@ -61,7 +64,7 @@ TRACKING_METHODS = [
 ]
 
 
-class OSXGrind(SingleArmEnv):
+class OSXGrind(ManipulationEnv):
     """
     This class corresponds to the grinding task for a single robot arm.
 
@@ -192,12 +195,10 @@ class OSXGrind(SingleArmEnv):
         controller_configs=None,
         gripper_types="Grinder",
         initialization_noise="default",
-        table_full_size=(0.8, 0.8, 0.05),
-        table_friction=(1.0, 5e-3, 1e-4),
         use_camera_obs=True,
+        use_object_obs=False,
         reward_scale=1.0,
         reward_shaping=True,
-        placement_initializer=None,
         has_renderer=False,
         has_offscreen_renderer=True,
         render_camera="frontview",
@@ -205,6 +206,7 @@ class OSXGrind(SingleArmEnv):
         render_visual_mesh=True,
         render_gpu_device_id=-1,
         control_freq=20,
+        lite_physics=True,
         horizon=1000,
         ignore_done=False,
         hard_reset=True,
@@ -213,9 +215,9 @@ class OSXGrind(SingleArmEnv):
         camera_widths=256,
         camera_depths=False,
         camera_segmentations=None,  # {None, instance, class, element}
-        renderer="mujoco",
-        renderer_config=None,
         task_config=DEFAULT_GRIND_CONFIG,
+        renderer="mjviewer",
+        renderer_config=None,
         reference_trajectory=None,
         reference_force=None,
         action_indices=range(0, 6)
@@ -254,9 +256,11 @@ class OSXGrind(SingleArmEnv):
         self.mortar_height = self.task_config["mortar_height"]
         self.mortar_radius = self.task_config["mortar_max_radius"]
         self.mortar_space_threshold_max = self.task_config["mortar_space_threshold_max"]
-        self.table_full_size = table_full_size
-        self.table_friction = table_friction
-        self.table_offset = np.array((0, 0, 0.8))
+
+        # settings for table top
+        self.table_full_size = self.task_config["table_full_size"]
+        self.table_offset = np.array([0, 0, 0.8])
+        self.table_friction = self.task_config["table_friction"]
         self.task_box = np.array([self.mortar_radius, self.mortar_radius, self.mortar_height+self.table_offset[2]]) + self.mortar_space_threshold_max
 
         # references to follow
@@ -279,8 +283,7 @@ class OSXGrind(SingleArmEnv):
         # actor action subset
         self.action_indices = action_indices
 
-        # object placement initializer
-        self.placement_initializer = placement_initializer
+        self.placement_initializer = None
 
         # log data
         self.prev_quat = self.reference_trajectory[0, 3:]
@@ -312,7 +315,7 @@ class OSXGrind(SingleArmEnv):
             robots=robots,
             env_configuration=env_configuration,
             controller_configs=controller_configs,
-            mount_types="default",
+            base_types="default",
             gripper_types=gripper_types,
             initialization_noise=initialization_noise,
             use_camera_obs=use_camera_obs,
@@ -323,6 +326,7 @@ class OSXGrind(SingleArmEnv):
             render_visual_mesh=render_visual_mesh,
             render_gpu_device_id=render_gpu_device_id,
             control_freq=control_freq,
+            lite_physics=lite_physics,
             horizon=horizon,
             ignore_done=ignore_done,
             hard_reset=hard_reset,
@@ -340,19 +344,20 @@ class OSXGrind(SingleArmEnv):
         assert len(action) == len(self.action_indices), \
             f"Size of action {len(action)} does not match expected {len(self.action_indices)}"
 
-        action_kp = np.interp(action, [-1,1], [0.001, 0.5]) # limits for kp (action from sac)
+        action_kp = np.interp(action, [-1, 1], [0.001, 0.5])  # limits for kp (action from sac)
         # change controller params
-        self.robots[0].controller.kp[self.action_indices] = action_kp[self.action_indices]
+        self.robots[0].composite_controller.part_controllers['right'].kp[self.action_indices] = action_kp[self.action_indices]
 
         pos_rot_action = np.zeros(6)
 
         if self.reference_force is not None:
-            if self.robots[0].controller.desired_ft_frame == "hand":
+            if self.robots[0].composite_controller.part_controllers['right'].desired_ft_frame == "hand":
                 # If i receive a reference in the gripper frame directly, change it to base frame
-                gripper_in_robot_base = self.robots[0].controller.pose_in_base_from_name(f"{self.robots[0].controller.ft_prefix}_eef")
+                gripper_in_robot_base = self.robots[0].composite_controller.part_controllers['right'].pose_in_base_from_name(
+                    f"{self.robots[0].composite_controller.part_controllers['right'].ft_prefix}_eef")
                 ee_force, ee_torque = T.force_in_A_to_force_in_B(self.reference_force[self.current_waypoint_index][:3],
-                                                                self.reference_force[self.current_waypoint_index][3:],
-                                                                gripper_in_robot_base) #TODO replace with spalg.convert_wrench 
+                                                                 self.reference_force[self.current_waypoint_index][3:],
+                                                                 gripper_in_robot_base)  # TODO replace with spalg.convert_wrench
 
                 self.ft_action = np.concatenate([ee_force, ee_torque])
 
@@ -362,7 +367,7 @@ class OSXGrind(SingleArmEnv):
 
         else:
             # if no force reference given, compute it at each step wrt world frame orientation
-            self.ft_action = self.compute_force_ref(self._eef_xpos)
+            self.ft_action = self.compute_force_ref(self.robots[0]._hand_pos['right'])
 
         # update in rendering the cylinder representing the normal force/direction
         # assume orientation is given perpendicular to mortar surface
@@ -471,9 +476,9 @@ class OSXGrind(SingleArmEnv):
     def _compute_relative_distance(self):
         relative_distance = np.zeros(6)
         if self.reference_trajectory is not None:
-            relative_distance[:3] = self.reference_trajectory[self.current_waypoint_index][:3] - self._eef_xpos
+            relative_distance[:3] = self.reference_trajectory[self.current_waypoint_index][:3] - self.robots[0]._hand_pos['right']
             ref_quat = self.reference_trajectory[self.current_waypoint_index][3:]
-            relative_distance[3:] = spalg.quaternions_orientation_error(ref_quat, self._eef_xquat)
+            relative_distance[3:] = spalg.quaternions_orientation_error(ref_quat, self.robots[0]._hand_quat['right'])
 
         # track error of the actions controlled by the policy
         self.tracking_error = np.linalg.norm(relative_distance)
@@ -497,6 +502,9 @@ class OSXGrind(SingleArmEnv):
         # Adjust base pose accordingly
         xpos = self.robots[0].robot_model.base_xpos_offset["table"](self.table_full_size[0])
         self.robots[0].robot_model.set_base_xpos(xpos)
+
+        # Get robot's contact geoms
+        self.robot_contact_geoms = self.robots[0].robot_model.contact_geoms
 
         # (For UR5e) specific starting point
         if self.robots[0].name == "UR5e":
@@ -615,6 +623,7 @@ class OSXGrind(SingleArmEnv):
                 name=name,
                 sensor=s,
                 sampling_rate=self.control_freq,
+                active=[True] * len(sensors)
             )
 
         return observables
@@ -641,8 +650,8 @@ class OSXGrind(SingleArmEnv):
         coefficients = np.polyfit(x, y, deg=2)
         f = np.poly1d(coefficients)
 
-        R = 0.01 * np.random.random_sample() + 0.008 # take a random radius inside the mortar
-        self.num_waypoints = np.random.randint(low=100, high=500) # take a random number of points for the trajectory
+        R = 0.01 * np.random.random_sample() + 0.008  # take a random radius inside the mortar
+        self.num_waypoints = np.random.randint(low=100, high=500)  # take a random number of points for the trajectory
         reference_trajectory, self.reference_force = self.recompute_trajectory(R, f(R), self.num_waypoints)
         reference_trajectory = np.append(reference_trajectory, [reference_trajectory[-1]], axis=0)
         self.reference_trajectory = reference_trajectory
@@ -657,8 +666,8 @@ class OSXGrind(SingleArmEnv):
         # Compute reference trajectory and reference force profile
 
         # mortar surface function and derivatives
-        def fx(x, y): return 4*x**3 * 11445.39  + y**2 * 2*x * 22890.7 + 2*x * 3.11558
-        def fy(x, y): return 4*y**3 * 11445.39  + 2*y * x**2 * 22890.7 + 2*y * 3.11558
+        def fx(x, y): return 4*x**3 * 11445.39 + y**2 * 2*x * 22890.7 + 2*x * 3.11558
+        def fy(x, y): return 4*y**3 * 11445.39 + 2*y * x**2 * 22890.7 + 2*y * 3.11558
 
         def get_orientation_quaternion_smooth(n, prev_quat=None, prev_R=None):
             if prev_R is None:
@@ -684,16 +693,16 @@ class OSXGrind(SingleArmEnv):
 
             return quat, R
 
-        h = np.clip(h, 0.01, 0.04) # make sure it's still inside the mortar as height
+        h = np.clip(h, 0.01, 0.04)  # make sure it's still inside the mortar as height
         table_height = 0.8
         initial_pose = [0.0, R, table_height+h, 0.0, 0.9990052, 0.04459406, 0.0]
 
         ref_traj = compute_trajectory(initial_pose,
-                                        plane='XY',
-                                        radius=R,
-                                        radius_direction='-Y',
-                                        steps=num_waypoints,
-                                        revolutions=1, from_center=False, trajectory_type='circular')
+                                      plane='XY',
+                                      radius=R,
+                                      radius_direction='-Y',
+                                      steps=num_waypoints,
+                                      revolutions=1, from_center=False, trajectory_type='circular')
 
         ind = 0
 
@@ -712,12 +721,11 @@ class OSXGrind(SingleArmEnv):
                 # first point won't have a rotation matrix to refer to
                 quat_ref, R = get_orientation_quaternion_smooth(normal_vect_direction)
 
-            ref_traj[ind,3:] = quat_ref
-            ind+=1
+            ref_traj[ind, 3:] = quat_ref
+            ind += 1
 
-        load_N = np.random.randint(low=1, high=20) # take a random force reference
+        load_N = np.random.randint(low=1, high=20)  # take a random force reference
         ref_force = np.array([[0, 0, load_N, 0, 0, 0]]*num_waypoints)
-
 
         return ref_traj, ref_force
 
@@ -820,7 +828,7 @@ class OSXGrind(SingleArmEnv):
             bool: True completed task
         """
 
-        return self.current_waypoint_index +2 == self.trajectory_len
+        return self.current_waypoint_index + 2 == self.trajectory_len
 
     def _check_task_space_limits(self):
         """
@@ -830,7 +838,7 @@ class OSXGrind(SingleArmEnv):
             bool: True within task box space limits
         """
 
-        ee_pos = self.robots[0].recent_ee_pose.current[:3]
+        ee_pos = self.robots[0].recent_ee_pose['right'].current[:3]
         return not np.any(np.abs(ee_pos) > self.task_box)
 
     def _check_force_torque_limits(self):
@@ -873,7 +881,7 @@ class OSXGrind(SingleArmEnv):
 
     @property
     def ee_wrench(self):
-        return self.robots[0].controller.current_wrench
+        return np.concatenate([self.robots[0].ee_force['right'], self.robots[0].ee_torque['right']])
 
     def __log_details__(self, action, residual_action):
         if self.log_details:
@@ -883,10 +891,10 @@ class OSXGrind(SingleArmEnv):
             self.log_dict['details']['action_in'].append(action)
             self.log_dict['details']['res_action'].append(residual_action)
             self.log_dict['details']['current_ref'].append(self.reference_trajectory[self.current_waypoint_index])
-            self.log_dict['details']['current_pos'].append(self._eef_xpos)
+            self.log_dict['details']['current_pos'].append(self.robots[0]._hand_pos['right'])
 
             # just for plotting, make quat affine
-            curr_quat = self._eef_xquat
+            curr_quat = self.robots[0]._hand_quat['right']
             if np.dot(curr_quat,  self.prev_quat) < 0:  # if pointing in opposite directions
                 curr_quat = -curr_quat
             self.prev_quat = curr_quat
@@ -898,10 +906,10 @@ class OSXGrind(SingleArmEnv):
 
             # TODO separate case hand from base
             self.log_dict['details']['current_force_ref_eef_frame'].append(self.reference_force[self.current_waypoint_index])
-            self.log_dict['details']['current_force_eef_frame'].append(self.robots[0].controller.eef_wrench_buf.average)
+            self.log_dict['details']['current_force_eef_frame'].append(self.robots[0].composite_controller.part_controllers['right'].eef_wrench_buf.average)
 
             # controller params
-            self.log_dict['details']['kp'].append(self.robots[0].controller.kp.copy())
+            self.log_dict['details']['kp'].append(self.robots[0].composite_controller.part_controllers['right'].kp.copy())
 
             if self.evaluate:
                 self.log_filename = self.log_dir + "/step_actions_eval.npz"

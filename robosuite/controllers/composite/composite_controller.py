@@ -308,7 +308,7 @@ class WholeBody(CompositeController):
     def set_goal(self, all_action):
         target_qpos = self.joint_action_policy.solve(all_action[: self.joint_action_policy.control_dim])
         # create new all_action vector with the IK solver's actions first
-        all_action = np.concatenate([target_qpos, all_action[self.joint_action_policy.control_dim :]])
+        all_action = np.concatenate([target_qpos, all_action[self.joint_action_policy.control_dim:]])
         for part_name, controller in self.part_controllers.items():
             start_idx, end_idx = self._action_split_indexes[part_name]
             action = all_action[start_idx:end_idx]

@@ -1,12 +1,13 @@
 from collections import OrderedDict
 from copy import deepcopy
+from typing import List
 
 import numpy as np
 
 import robosuite.macros as macros
 from robosuite.environments.base import MujocoEnv
 from robosuite.robots import ROBOT_CLASS_MAPPING
-from robosuite.robots.single_arm import SingleArm
+from robosuite.robots.robot import Robot
 from robosuite.utils.mjcf_utils import IMAGE_CONVENTION_MAPPING
 from robosuite.utils.observables import Observable, sensor
 
@@ -158,7 +159,7 @@ class RobotEnv(MujocoEnv):
         robots = list(robots) if type(robots) is list or type(robots) is tuple else [robots]
         self.num_robots = len(robots)
         self.robot_names = robots
-        self.robots: list[SingleArm] = self._input2list(None, self.num_robots)
+        self.robots: List[Robot] = self._input2list(None, self.num_robots)
         self._action_dim = None
 
         # Robot base

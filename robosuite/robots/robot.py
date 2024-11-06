@@ -451,11 +451,19 @@ class Robot(object):
             """
             return T.mat2quat(self.sim.data.site_xmat[self.eef_site_id[arm]].reshape((3, 3)))
 
+        @sensor(modality=modality)
+        def eef_vel_lin(obs_cache):
+            return np.array(self.sim.data.get_body_xvelp(self.robot_model.eef_name[arm]))
+
+        @sensor(modality=modality)
+        def eef_vel_ang(obs_cache):
+            return np.array(self.sim.data.get_body_xvelr(self.robot_model.eef_name[arm]))
+
         # only consider prefix if there is more than one arm
         pf = f"{arm}_" if len(self.arms) > 1 else ""
 
-        sensors = [eef_pos, eef_quat, eef_quat_site]
-        names = [f"{pf}eef_pos", f"{pf}eef_quat", f"{pf}eef_quat_site"]
+        sensors = [eef_pos, eef_quat, eef_quat_site, eef_vel_lin, eef_vel_ang]
+        names = [f"{pf}eef_pos", f"{pf}eef_quat", f"{pf}eef_quat_site", f"{pf}eef_vel_lin", f"{pf}eef_vel_ang"]
 
         # add in gripper sensors if this robot has a gripper
         if self.has_gripper[arm]:

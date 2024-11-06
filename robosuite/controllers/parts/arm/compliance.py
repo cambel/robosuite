@@ -3,10 +3,10 @@ import numpy as np
 from robosuite.utils.buffers import RingBuffer
 
 import robosuite.utils.transform_utils as T
-from robosuite.controllers.base_controller import Controller
-from robosuite.controllers.joint_pos import JointPositionController
-from robosuite.controllers.joint_vel import JointVelocityController
-from robosuite.controllers.osc import OperationalSpaceController
+from robosuite.controllers.parts.controller import Controller
+from robosuite.controllers.parts.generic.joint_pos import JointPositionController
+from robosuite.controllers.parts.generic.joint_vel import JointVelocityController
+from robosuite.controllers.parts.arm.osc import OperationalSpaceController
 from robosuite.utils.control_utils import *
 
 # Supported impedance modes
@@ -62,7 +62,7 @@ class ComplianceController(Controller):
     def __init__(
         self,
         sim,
-        eef_name,
+        ref_name,
         joint_indexes,
         actuator_range,
         inner_controller_config,
@@ -86,10 +86,11 @@ class ComplianceController(Controller):
         control_delta=True,
         ik_solver="jacobian_transpose",
         desired_ft_frame="robot_base",  # or "robot_base"
+        lite_physics=True,
         **kwargs,  # does nothing; used so no error raised when dict is passed with extra terms used previously
     ):
 
-        self.ft_prefix = eef_name.split('_')[0]
+        self.ft_prefix = ref_name.split('_')[0] + '_' + kwargs.get("part_name", None)
         self.ft_offset = ft_offset
         self.wrench_buf = RingBuffer(dim=6, length=ft_buffer_size)
         self.eef_wrench_buf = RingBuffer(dim=6, length=ft_buffer_size)
@@ -97,9 +98,12 @@ class ComplianceController(Controller):
 
         super().__init__(
             sim,
-            eef_name,
-            joint_indexes,
-            actuator_range,
+            ref_name=ref_name,
+            joint_indexes=joint_indexes,
+            actuator_range=actuator_range,
+            lite_physics=lite_physics,
+            part_name=kwargs.get("part_name", None),
+            naming_prefix=kwargs.get("naming_prefix", None),
         )
 
         # Instantiate the inner position/velocity controller
@@ -117,10 +121,12 @@ class ComplianceController(Controller):
 
         self.inner_controller = inner_controller_class(
             sim,
-            eef_name,
+            ref_name,
             joint_indexes,
             actuator_range,
-            **inner_controller_config
+            part_name=self.part_name,
+            naming_prefix=self.naming_prefix,
+            **inner_controller_config,
         )
 
         # Make sure that the ik solver is valid
@@ -305,17 +311,17 @@ class ComplianceController(Controller):
         # We only want to update goal orientation if there is a valid delta ori value OR if we're using absolute ori
         # use math.isclose instead of numpy because numpy is slow
         self.goal_ori = set_goal_orientation(
-            scaled_delta[3:], self.ee_ori_mat, orientation_limit=self.orientation_limits, set_ori=set_ori
+            scaled_delta[3:], self.ref_ori_mat, orientation_limit=self.orientation_limits, set_ori=set_ori
         )
         self.goal_pos = set_goal_position(
-            scaled_delta[:3], self.ee_pos, position_limit=self.position_limits, set_pos=set_pos
+            scaled_delta[:3], self.ref_pos, position_limit=self.position_limits, set_pos=set_pos
         )
 
         if self.interpolator_pos is not None:
             self.interpolator_pos.set_goal(self.goal_pos)
 
         if self.interpolator_ori is not None:
-            self.ori_ref = np.array(self.ee_ori_mat)  # reference is the current orientation at start
+            self.ori_ref = np.array(self.ref_ori_mat)  # reference is the current orientation at start
             self.interpolator_ori.set_goal(
                 orientation_error(self.goal_ori, self.ori_ref)
             )  # goal is the total orientation error
@@ -348,15 +354,15 @@ class ComplianceController(Controller):
 
         if self.interpolator_ori is not None:
             # relative orientation based on difference between current ori and ref
-            self.relative_ori = orientation_error(self.ee_ori_mat, self.ori_ref)
+            self.relative_ori = orientation_error(self.ref_ori_mat, self.ori_ref)
 
             ori_error = self.interpolator_ori.get_interpolated_goal()
         else:
             desired_ori = np.array(self.goal_ori)
-            ori_error = orientation_error(desired_ori, self.ee_ori_mat)
+            ori_error = orientation_error(desired_ori, self.ref_ori_mat)
 
         # Compute desired force and torque based on errors
-        position_error = (desired_pos - self.ee_pos)
+        position_error = (desired_pos - self.ref_pos)
         # TODO (cambel): force/torque is too sensitive, how to fix that?
         force_torque_error = (self.desired_force_torque - self.current_wrench) * [0.1, 0.1, 0.1, 0.0, 0.0, 0.0]
         pose_error = np.concatenate([position_error, ori_error])
@@ -471,6 +477,10 @@ class ComplianceController(Controller):
         self.current_joint_velocities = self.last_joint_velocities + 0.5 * self.current_joint_accelerations * self.period
         # self.current_joint_positions = self.last_joint_positions + 0.5 * self.current_joint_velocities * self.period
 
+    def update_origin(self, origin_pos, origin_ori):
+        super().update_origin(origin_pos, origin_ori)
+        self.inner_controller.update_origin(origin_pos, origin_ori)
+
     def update_initial_joints(self, initial_joints):
         # First, update from the superclass method
         super().update_initial_joints(initial_joints)
@@ -487,8 +497,8 @@ class ComplianceController(Controller):
         """
         self.inner_controller.reset_goal()
 
-        self.goal_ori = np.array(self.ee_ori_mat)
-        self.goal_pos = np.array(self.ee_pos)
+        self.goal_ori = np.array(self.ref_ori_mat)
+        self.goal_pos = np.array(self.ref_pos)
 
         # Also reset interpolators if required
 
@@ -496,7 +506,7 @@ class ComplianceController(Controller):
             self.interpolator_pos.set_goal(self.goal_pos)
 
         if self.interpolator_ori is not None:
-            self.ori_ref = np.array(self.ee_ori_mat)  # reference is the current orientation at start
+            self.ori_ref = np.array(self.ref_ori_mat)  # reference is the current orientation at start
             self.interpolator_ori.set_goal(
                 orientation_error(self.goal_ori, self.ori_ref)
             )  # goal is the total orientation error
@@ -572,8 +582,8 @@ class ComplianceController(Controller):
         rot_in_world = self.sim.data.get_body_xmat(name).reshape((3, 3))
         pose_in_world = T.make_pose(pos_in_world, rot_in_world)
 
-        base_pos_in_world = self.sim.data.get_body_xpos(f"robot{self.ft_prefix[-1]}_base")
-        base_rot_in_world = self.sim.data.get_body_xmat(f"robot{self.ft_prefix[-1]}_base").reshape((3, 3))
+        base_pos_in_world = self.sim.data.get_body_xpos(f"{self.naming_prefix}base")
+        base_rot_in_world = self.sim.data.get_body_xmat(f"{self.naming_prefix}base").reshape((3, 3))
         base_pose_in_world = T.make_pose(base_pos_in_world, base_rot_in_world)
         world_pose_in_base = T.pose_inv(base_pose_in_world)
 
