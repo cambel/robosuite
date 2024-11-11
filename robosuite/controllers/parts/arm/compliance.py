@@ -79,6 +79,7 @@ class ComplianceController(Controller):
         stiffness_limits=(50, 500),
         kp_limits=(0, 300),
         damping_ratio_limits=(0, 100),
+        selection_matrix=np.ones(6),
         position_limits=None,
         orientation_limits=None,
         interpolator_pos=None,
@@ -95,6 +96,7 @@ class ComplianceController(Controller):
         self.wrench_buf = RingBuffer(dim=6, length=ft_buffer_size)
         self.eef_wrench_buf = RingBuffer(dim=6, length=ft_buffer_size)
         self.desired_ft_frame = desired_ft_frame
+        self.selection_matrix_gripper_frame = selection_matrix
 
         super().__init__(
             sim,
@@ -306,7 +308,7 @@ class ComplianceController(Controller):
             if set_ori is None:
                 set_ori = (T.quat2mat(T.axisangle2quat(delta[3:6])))
             # No scaling of values since these are absolute values
-            scaled_delta = delta
+            scaled_delta = np.zeros_like(delta)
 
         # We only want to update goal orientation if there is a valid delta ori value OR if we're using absolute ori
         # use math.isclose instead of numpy because numpy is slow
@@ -364,13 +366,12 @@ class ComplianceController(Controller):
         # Compute desired force and torque based on errors
         position_error = (desired_pos - self.ref_pos)
         # TODO (cambel): force/torque is too sensitive, how to fix that?
-        force_torque_error = (self.desired_force_torque - self.current_wrench) * [0.1, 0.1, 0.1, 0.0, 0.0, 0.0]
+        force_torque_error = (self.desired_force_torque - self.current_wrench)  # * [0, 0, 0, 0.0, 0.0, 0.0] # TODO remove?
         pose_error = np.concatenate([position_error, ori_error])
 
         # apply the selection matrix in gripper frame
-        selection_matrix_gripper_frame = np.diag([1, 1, 0, 1, 1, 1])
         eef_to_base = self.pose_in_base_from_name(f"{self.ft_prefix}_eef")[:3, :3]  # get just rotation matrix
-        pose_error_sel, force_torque_error_sel = self.apply_selection_matrix_gripper_frame(pose_error, force_torque_error, selection_matrix_gripper_frame, eef_to_base)
+        pose_error_sel, force_torque_error_sel = self.apply_selection_matrix_gripper_frame(pose_error, force_torque_error, self.selection_matrix_gripper_frame, eef_to_base)
 
         # base frame error
         error = self.stiffness * pose_error_sel + force_torque_error_sel
@@ -398,8 +399,8 @@ class ComplianceController(Controller):
         torque_error_gripper = R_gripper_to_ref.T @ force_error_ref[3:]
 
         # Apply selection matrix in gripper frame
-        selected_pose_error_gripper = selection_matrix_gripper @ np.concatenate([pos_error_gripper, ori_error_gripper])
-        selected_ft_error_gripper = (np.eye(6) - selection_matrix_gripper) @ np.concatenate([force_error_gripper, torque_error_gripper])
+        selected_pose_error_gripper = np.diag(selection_matrix_gripper) @ np.concatenate([pos_error_gripper, ori_error_gripper])
+        selected_ft_error_gripper = (np.eye(6) - np.diag(selection_matrix_gripper)) @ np.concatenate([force_error_gripper, torque_error_gripper])
 
         # Convert selected errors back to reference frame
         selected_pos_error_ref = R_gripper_to_ref @ selected_pose_error_gripper[:3]
