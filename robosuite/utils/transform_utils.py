@@ -881,6 +881,90 @@ def get_orientation_error(target_orn, current_orn):
     return orn_error
 
 
+def skew(v):
+    """
+    Returns the 3x3 skew matrix.
+    The skew matrix is a square matrix M{A} whose transpose is also its
+    negative; that is, it satisfies the condition M{-A = A^T}.
+    @type v: array
+    @param v: The input array
+    @rtype: array, shape (3,3)
+    @return: The resulting skew matrix
+    """
+    skv = np.roll(np.roll(np.diag(np.asarray(v).flatten()), 1, 1), -1, 0)
+    return (skv - skv.T)
+
+
+def quaternions_orientation_error(target_orn, current_orn):
+    """
+    Calculates the orientation error between two quaternions
+    Qd is the desired orientation
+    Qc is the current orientation
+    both with respect to the same fixed frame
+
+    return vector part
+    """
+    ne = current_orn[3]*target_orn[3] + np.dot(current_orn[:3], target_orn[:3])
+    ee = current_orn[3]*target_orn[:3] - target_orn[3] * current_orn[:3] + np.dot(skew(current_orn[:3]), target_orn[:3])
+    ee *= np.sign(ne)  # disambiguate the sign of the quaternion
+    return ee
+
+
+def limit_quaternion_rotation(q1, q2, max_angle_rad):
+    """
+    Compute an intermediate quaternion that lies on the shortest path from q1 to q2,
+    limited by the maximum allowed rotation angle.
+
+    Parameters:
+    q1, q2: numpy arrays of shape (4,) representing quaternions in format [x, y, z, w]
+    max_angle_rad: float, maximum allowed rotation angle in radians
+
+    Returns:
+    numpy.ndarray: The limited quaternion in [x, y, z, w] format
+    """
+    # Ensure quaternions are normalized
+    q1 = q1 / np.linalg.norm(q1)
+    q2 = q2 / np.linalg.norm(q2)
+
+    # Calculate the dot product (note: w component is at index 3)
+    dot = np.dot(q1, q2)
+
+    # If the dot product is negative, negate q2
+    # This ensures we take the shortest path
+    if dot < 0:
+        q2 = -q2
+        dot = -dot
+
+    # Clamp dot product to [-1, 1] for numerical stability
+    dot = np.clip(dot, -1.0, 1.0)
+
+    # Calculate the total angle between quaternions
+    total_angle = np.arccos(dot)  # Note: This is half the rotation angle
+
+    # If twice the total angle is less than the maximum, return q2
+    if 2 * total_angle <= max_angle_rad:
+        return q2
+
+    # Calculate the interpolation parameter for the maximum allowed angle
+    t = max_angle_rad / (2 * total_angle)
+
+    # Calculate the relative rotation quaternion from q1 to q2
+    relative_rot = q2 - q1 * dot
+    relative_rot_norm = np.linalg.norm(relative_rot)
+
+    if relative_rot_norm < 1e-7:  # Handle case where quaternions are very close
+        return q1
+
+    relative_rot = relative_rot / relative_rot_norm
+
+    # Construct the limited quaternion using the half-angle formula
+    half_max_angle = max_angle_rad / 2
+    result = q1 * np.cos(half_max_angle) + relative_rot * np.sin(half_max_angle)
+
+    # Ensure the result is normalized
+    return result / np.linalg.norm(result)
+
+
 def get_pose_error(target_pose, current_pose):
     """
     Computes the error corresponding to target pose - current pose as a 6-dim vector.
