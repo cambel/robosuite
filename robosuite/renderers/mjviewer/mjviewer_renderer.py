@@ -1,4 +1,5 @@
 from mujoco import viewer
+import mujoco
 
 DEFAULT_FREE_CAM = {
     "lookat": [0, 0, 1],
@@ -33,6 +34,7 @@ class MjviewerRenderer:
             )
 
             self.viewer.opt.geomgroup[0] = 0
+            self.viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_TRANSPARENT] = True
 
             if self.camera_config is not None:
                 self.viewer.cam.lookat = self.camera_config["lookat"]
@@ -46,6 +48,8 @@ class MjviewerRenderer:
                     self.viewer.cam.fixedcamid = self.camera_id
                 else:
                     self.viewer.cam.type = 0
+
+            # self.viewer.cam.type = 0
 
         self.viewer.sync()
 
