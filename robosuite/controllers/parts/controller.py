@@ -5,6 +5,7 @@ import mujoco
 import numpy as np
 
 import robosuite.macros as macros
+from robosuite.utils.binding_utils import MjSim
 
 
 class Controller(object, metaclass=abc.ABCMeta):
@@ -60,7 +61,7 @@ class Controller(object, metaclass=abc.ABCMeta):
         self.input_max = None
 
         # mujoco simulator state
-        self.sim = sim
+        self.sim: MjSim = sim
         self.model_timestep = macros.SIMULATION_TIMESTEP
         self.lite_physics = lite_physics
         self.ref_name = ref_name

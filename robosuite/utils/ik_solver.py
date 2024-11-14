@@ -29,9 +29,9 @@ class IKError(Exception):
 
 class MuJoCoIKSolver:
     def __init__(self, model: MjModel, data: MjData, end_effector_site: str,
-                 position_threshold: float = 1e-3,
-                 rotation_threshold: float = 1e-2,
-                 max_iterations: int = 100,
+                 position_threshold: float = 1e-4,
+                 rotation_threshold: float = 1e-3,
+                 max_iterations: int = 500,
                  joint_indexes=None):
         """
         Initialize the IK solver.

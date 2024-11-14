@@ -1,7 +1,9 @@
 from copy import copy
 import numpy as np
+from robosuite.utils.binding_utils import MjSim
 from robosuite.utils.buffers import RingBuffer
 
+from robosuite.utils.sim_utils import compensate_ft_reading
 import robosuite.utils.transform_utils as T
 from robosuite.controllers.parts.controller import Controller
 from robosuite.controllers.parts.generic.joint_pos import JointPositionController
@@ -61,7 +63,7 @@ class ComplianceController(Controller):
 
     def __init__(
         self,
-        sim,
+        sim: MjSim,
         ref_name,
         joint_indexes,
         actuator_range,
@@ -75,7 +77,6 @@ class ComplianceController(Controller):
         force_limits=(-50.0, 50.0),
         torque_limits=(-10.0, 10.0),
         ft_buffer_size=10,
-        ft_offset=(0., 0., 0., 0., 0., 0.),  # offset payload in world frame
         stiffness_limits=(50, 500),
         kp_limits=(0, 300),
         damping_ratio_limits=(0, 100),
@@ -85,6 +86,7 @@ class ComplianceController(Controller):
         interpolator_pos=None,
         interpolator_ori=None,
         control_delta=True,
+        gripper_body_name=None,  # If none, do not compensate payload
         ik_solver="jacobian_transpose",
         desired_ft_frame="robot_base",  # or "robot_base"
         lite_physics=True,
@@ -92,11 +94,13 @@ class ComplianceController(Controller):
     ):
 
         self.ft_prefix = ref_name.split('_')[0] + '_' + kwargs.get("part_name", None)
-        self.ft_offset = ft_offset
-        self.wrench_buf = RingBuffer(dim=6, length=ft_buffer_size)
-        self.eef_wrench_buf = RingBuffer(dim=6, length=ft_buffer_size)
+        self.wrench_in_base_frame_buf = RingBuffer(dim=6, length=ft_buffer_size)
+        self.wrench_in_eef_frame_buf = RingBuffer(dim=6, length=ft_buffer_size)
         self.desired_ft_frame = desired_ft_frame
-        self.selection_matrix_gripper_frame = selection_matrix
+        self.selection_matrix = selection_matrix
+        self.gripper_body_name = gripper_body_name
+        if self.gripper_body_name:
+            self.gripper_inertial_properties = sim.get_body_inertial_properties(f"{self.ft_prefix}_{gripper_body_name}")
 
         super().__init__(
             sim,
@@ -230,15 +234,22 @@ class ComplianceController(Controller):
     def transform_wrench_to_base_frame(self):
         # Compute force/torque
         # get sensor f/t measurements from gripper site, transform to world frame
-        wrench_force = self.get_wrench()
-        wrench_force -= self.ft_offset
-
         gripper_in_robot_base = self.pose_in_base_from_name(f"{self.ft_prefix}_eef")
         wFtS = T.force_frame_transform(gripper_in_robot_base)
-        current_wrench = np.dot(wFtS, wrench_force)
 
-        self.wrench_buf.push(current_wrench)
-        self.eef_wrench_buf.push(wrench_force)
+        wrench_force = self.get_wrench()
+
+        if self.gripper_body_name:
+            wrench_force = compensate_ft_reading(wrench_force[:3], wrench_force[3:],
+                                                 self.gripper_inertial_properties['mass'],
+                                                 self.gripper_inertial_properties['local_com'],
+                                                 self.gripper_inertial_properties['world_rot_mat'],
+                                                 self.sim.model._model.opt.gravity)
+
+        current_wrench = np.dot(wFtS, wrench_force) # compute force/torque reading in base_frame
+
+        self.wrench_in_base_frame_buf.push(current_wrench)
+        self.wrench_in_eef_frame_buf.push(wrench_force)
 
     def set_goal(self, action, set_pos=None, set_ori=None):
         """
@@ -365,22 +376,10 @@ class ComplianceController(Controller):
 
         # Compute desired force and torque based on errors
         position_error = (desired_pos - self.ref_pos)
-        # TODO (cambel): force/torque is too sensitive, how to fix that?
-        force_torque_error = (self.desired_force_torque - self.current_wrench)  # * [0, 0, 0, 0.0, 0.0, 0.0] # TODO remove?
+        force_torque_error = (self.desired_force_torque - self.current_wrench)
         pose_error = np.concatenate([position_error, ori_error])
 
-        # apply the selection matrix in gripper frame
-        eef_to_base = self.pose_in_base_from_name(f"{self.ft_prefix}_eef")[:3, :3]  # get just rotation matrix
-        pose_error_sel, force_torque_error_sel = self.apply_selection_matrix_gripper_frame(pose_error, force_torque_error, self.selection_matrix_gripper_frame, eef_to_base)
-
-        # base frame error
-        error = self.stiffness * pose_error_sel + force_torque_error_sel
-
-        # Compute necessary error terms for PD controller
-        derr = error - self.last_err
-        self.last_err = error
-        self.derr_buf.push(derr)
-        spatial_controller = self.kp * error + self.kd * self.derr_buf.average / self.period
+        spatial_controller = self.compute_error_in_eef_frame(pose_error, force_torque_error)
 
         desired_wrench = self.error_scale * spatial_controller
         # print("desired_wrench", desired_wrench)
@@ -391,25 +390,50 @@ class ComplianceController(Controller):
         elif self.inner_controller_type == "OSC_POSE":
             return self.use_osc(desired_wrench)
 
-    def apply_selection_matrix_gripper_frame(self, pos_error_ref, force_error_ref, selection_matrix_gripper, R_gripper_to_ref):  # TODO maybe with quat is faster
-        # Convert errors from reference frame to gripper frame
-        pos_error_gripper = R_gripper_to_ref.T @ pos_error_ref[:3]  # transpose,not inv since its just rotation, without translation
-        ori_error_gripper = R_gripper_to_ref.T @ pos_error_ref[3:]
-        force_error_gripper = R_gripper_to_ref.T @ force_error_ref[:3]
-        torque_error_gripper = R_gripper_to_ref.T @ force_error_ref[3:]
+    def compute_error_in_base_frame(self, pose_error, force_torque_error):
+        """
+            Compute error normally assuming that desired pose and force are given 
+            in the robot's base frame.
+        """
+        # base frame error
+        error = self.stiffness * pose_error + force_torque_error
 
-        # Apply selection matrix in gripper frame
-        selected_pose_error_gripper = np.diag(selection_matrix_gripper) @ np.concatenate([pos_error_gripper, ori_error_gripper])
-        selected_ft_error_gripper = (np.eye(6) - np.diag(selection_matrix_gripper)) @ np.concatenate([force_error_gripper, torque_error_gripper])
+        # Compute necessary error terms for PD controller
+        derr = error - self.last_err
+        self.last_err = error
+        self.derr_buf.push(derr)
+        spatial_controller = self.kp * error + self.kd * self.derr_buf.average / self.period
 
-        # Convert selected errors back to reference frame
-        selected_pos_error_ref = R_gripper_to_ref @ selected_pose_error_gripper[:3]
-        selected_ori_error_ref = R_gripper_to_ref @ selected_pose_error_gripper[3:]
+        return spatial_controller
 
-        selected_force_error_ref = R_gripper_to_ref @ selected_ft_error_gripper[:3]
-        selected_torque_error_ref = R_gripper_to_ref @ selected_ft_error_gripper[3:]
+    def compute_error_in_eef_frame(self, pose_error, force_torque_error):
+        """
+            Compute error assuming that that the desired pose and force are given
+            in the robot's end-effector frame
+        """
+        eef_to_base = self.pose_in_base_from_name(f"{self.ft_prefix}_eef")[:3, :3]
 
-        return np.concatenate([selected_pos_error_ref, selected_ori_error_ref]), np.concatenate([selected_force_error_ref, selected_torque_error_ref])
+        eef_pos_error = self.get_error_in_frame(pose_error, eef_to_base.T)
+        eef_wrench_error = self.get_error_in_frame(force_torque_error, eef_to_base.T)
+
+        eef_pos_error_sel = self.selection_matrix * eef_pos_error
+        eef_wrench_error_sel = (np.ones_like(self.selection_matrix) - self.selection_matrix) * eef_wrench_error
+
+        # base frame error
+        error = self.stiffness * eef_pos_error_sel + eef_wrench_error_sel
+
+        # Compute necessary error terms for PD controller
+        derr = error - self.last_err
+        self.last_err = error
+        self.derr_buf.push(derr)
+        spatial_controller = self.kp * error + self.kd * self.derr_buf.average / self.period
+
+        return self.get_error_in_frame(spatial_controller, eef_to_base)
+
+    def get_error_in_frame(self, error, A_to_B):
+        pos_error = A_to_B @ error[:3]  # transpose,not inv since its just rotation, without translation
+        ori_error = A_to_B @ error[3:]
+        return np.concatenate([pos_error, ori_error])
 
     def use_osc(self, desired_wrench):
         self.inner_controller.set_goal(action=desired_wrench)
@@ -515,7 +539,11 @@ class ComplianceController(Controller):
 
     @property
     def current_wrench(self):
-        return self.wrench_buf.average
+        return self.wrench_in_base_frame_buf.average
+
+    @property
+    def eef_wrench(self):
+        return self.wrench_in_eef_frame_buf.average
 
     @ property
     def control_limits(self):
@@ -590,3 +618,13 @@ class ComplianceController(Controller):
 
         pose_in_base = T.pose_in_A_to_pose_in_B(pose_in_world, world_pose_in_base)
         return pose_in_base
+
+    def pose_in_A_to_pose_in_B_by_site_name(self, A, B):
+        pos_in_A = self.sim.data.site_xpos[self.sim.model.site_name2id(A)]
+        rot_in_A = self.sim.data.site_xmat[self.sim.model.site_name2id(A)].reshape([3, 3])
+        pose_in_A = T.make_pose(pos_in_A, rot_in_A)
+
+        pos_in_B = self.sim.data.site_xpos[self.sim.model.site_name2id(B)]
+        rot_in_B = self.sim.data.site_xmat[self.sim.model.site_name2id(B)].reshape([3, 3])
+        pose_in_B = T.make_pose(pos_in_B, rot_in_B)
+        return T.pose_in_A_to_pose_in_B(pose_in_A, pose_in_B)

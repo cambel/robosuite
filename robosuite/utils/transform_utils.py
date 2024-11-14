@@ -1117,3 +1117,39 @@ def motion_frame_transform(bTa):
     bXa[3:, :3] = np.dot(_skew_symmetric_translation(bPa), bRa)
     bXa[3:, 3:] = bRa
     return bXa
+
+
+def rotate_vector_by_quaternion(vector, quaternion):
+    """
+    Rotate a 3D vector using a quaternion rotation.
+
+    Args:
+        vector (np.array): 3D vector [x, y, z]
+        quaternion (np.array): Quaternion in format [x, y, z, w]
+
+    Returns:
+        np.array: Rotated vector
+    """
+    # Normalize the quaternion
+    q = quaternion / np.linalg.norm(quaternion)
+    q_x, q_y, q_z, q_w = q
+
+    # Convert vector to pure quaternion (w = 0)
+    v_x, v_y, v_z = vector
+
+    # First multiply: q * v
+    temp_w = -q_x*v_x - q_y*v_y - q_z*v_z
+    temp_x = q_w*v_x + q_y*v_z - q_z*v_y
+    temp_y = q_w*v_y - q_x*v_z + q_z*v_x
+    temp_z = q_w*v_z + q_x*v_y - q_y*v_x
+
+    # Second multiply: result * q_conjugate
+    q_conjugate = np.array([-q_x, -q_y, -q_z, q_w])
+
+    result_w = -temp_x*(-q_x) - temp_y*(-q_y) - temp_z*(-q_z) + temp_w*q_w
+    result_x = temp_w*(-q_x) + temp_y*(-q_z) - temp_z*(-q_y) + temp_x*q_w
+    result_y = temp_w*(-q_y) - temp_x*(-q_z) + temp_z*(-q_x) + temp_y*q_w
+    result_z = temp_w*(-q_z) + temp_x*(-q_y) - temp_y*(-q_x) + temp_z*q_w
+
+    # Return just the vector part (x, y, z)
+    return np.array([result_x, result_y, result_z])
