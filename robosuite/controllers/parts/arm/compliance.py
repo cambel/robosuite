@@ -1,5 +1,6 @@
 from copy import copy
 import numpy as np
+
 from robosuite.utils.binding_utils import MjSim
 from robosuite.utils.buffers import RingBuffer
 
@@ -88,7 +89,7 @@ class ComplianceController(Controller):
         control_delta=True,
         gripper_body_name=None,  # If none, do not compensate payload
         ik_solver="jacobian_transpose",
-        desired_ft_frame="robot_base",  # or "robot_base"
+        frame_of_reference="eef",  # or "robot_base"
         lite_physics=True,
         **kwargs,  # does nothing; used so no error raised when dict is passed with extra terms used previously
     ):
@@ -96,7 +97,7 @@ class ComplianceController(Controller):
         self.ft_prefix = ref_name.split('_')[0] + '_' + kwargs.get("part_name", None)
         self.wrench_in_base_frame_buf = RingBuffer(dim=6, length=ft_buffer_size)
         self.wrench_in_eef_frame_buf = RingBuffer(dim=6, length=ft_buffer_size)
-        self.desired_ft_frame = desired_ft_frame
+        self.frame_of_reference = frame_of_reference
         self.selection_matrix = selection_matrix
         self.gripper_body_name = gripper_body_name
         if self.gripper_body_name:
@@ -246,7 +247,7 @@ class ComplianceController(Controller):
                                                  self.gripper_inertial_properties['world_rot_mat'],
                                                  self.sim.model._model.opt.gravity)
 
-        current_wrench = np.dot(wFtS, wrench_force) # compute force/torque reading in base_frame
+        current_wrench = np.dot(wFtS, wrench_force)  # compute force/torque reading in base_frame
 
         self.wrench_in_base_frame_buf.push(current_wrench)
         self.wrench_in_eef_frame_buf.push(wrench_force)
@@ -344,10 +345,50 @@ class ComplianceController(Controller):
 
     def run_controller(self):
         """
-        TODO: docs
+        Executes a hybrid force-position controller that can operate in either end-effector or robot base frame.
+        The controller interpolates between current and desired positions/orientations and computes command
+        torques based on position/orientation errors and wrench (force/torque) errors.
+
+        The controller supports two frames of reference:
+            - 'eef': End-effector frame
+            - 'robot_base': Robot base frame
+
+        The control law combines:
+            1. Position/orientation control through stiffness-based pose error
+            2. Force/torque control through wrench error
+            3. PD control for dynamic response
+
+        The controller can use different inner control modes:
+            - JOINT_POSITION: Uses joint position control
+            - JOINT_VELOCITY: Uses joint velocity control
+            - OSC_POSE: Uses operational space control
+
+        The desired position and orientation can be interpolated using:
+            - Linear interpolation for position (order=1)
+            - Direct goal setting (no interpolation)
+
+        State updates and error calculations are performed in the following sequence:
+            1. Update current state
+            2. Calculate interpolated goals
+            3. Compute pose and wrench errors
+            4. Transform errors based on frame of reference
+            5. Apply selection matrix to separate position and force control directions
+            6. Compute control output using PD control
+            7. Transform output to appropriate frame
+            8. Apply inner controller
 
         Returns:
-             np.array: Command torques
+            np.array: Command torques for the robot joints based on the computed control law.
+                    The exact computation depends on the inner_controller_type setting.
+
+        Raises:
+            ValueError: If frame_of_reference is not 'eef' or 'robot_base'
+
+        Notes:
+            - The selection matrix determines which dimensions use position control vs force control
+            - Position/orientation errors are scaled by stiffness
+            - A moving average filter is applied to the derivative error term
+            - The controller maintains state between calls through last_err and derr_buf
         """
 
         # 1. Update state
@@ -376,13 +417,38 @@ class ComplianceController(Controller):
 
         # Compute desired force and torque based on errors
         position_error = (desired_pos - self.ref_pos)
-        force_torque_error = (self.desired_force_torque - self.current_wrench)
         pose_error = np.concatenate([position_error, ori_error])
 
-        spatial_controller = self.compute_error_in_eef_frame(pose_error, force_torque_error)
+        if self.frame_of_reference == "eef":
+            # Convert pose error to end effector frame
+            eef_to_base = self.pose_in_base_from_name(f"{self.ft_prefix}_eef")[:3, :3]
+            # Assume that the desired force torque is given in the end effector frame
+            wrench_error = self.desired_force_torque - self.eef_wrench
+            pose_error = self.rotate_by_transformation(pose_error, eef_to_base.T)
 
-        desired_wrench = self.error_scale * spatial_controller
-        # print("desired_wrench", desired_wrench)
+        elif self.frame_of_reference == "robot_base":
+            pose_error = (desired_pos - self.ref_pos)
+            # Assume that the desired force torque is given in the robot base frame
+            wrench_error = (self.desired_force_torque - self.current_wrench)
+
+        else:
+            raise ValueError("Unsupported frame of reference. Only 'eef' and 'robot_base' are supported.")
+
+        pose_error_sel = self.selection_matrix * pose_error
+        wrench_error_sel = (np.ones_like(self.selection_matrix) - self.selection_matrix) * wrench_error
+
+        # base frame error
+        error = self.stiffness * pose_error_sel + wrench_error_sel
+
+        # Compute necessary error terms for PD controller
+        derr = error - self.last_err
+        self.last_err = error
+        self.derr_buf.push(derr)
+        spatial_controller = self.kp * error + self.kd * self.derr_buf.average / self.period
+
+        if self.frame_of_reference == "eef":
+            # convert the error back to the robot_base frame
+            desired_wrench = self.rotate_by_transformation(spatial_controller, eef_to_base)
 
         if self.inner_controller_type == "JOINT_POSITION" \
                 or self.inner_controller_type == "JOINT_VELOCITY":
@@ -390,48 +456,8 @@ class ComplianceController(Controller):
         elif self.inner_controller_type == "OSC_POSE":
             return self.use_osc(desired_wrench)
 
-    def compute_error_in_base_frame(self, pose_error, force_torque_error):
-        """
-            Compute error normally assuming that desired pose and force are given 
-            in the robot's base frame.
-        """
-        # base frame error
-        error = self.stiffness * pose_error + force_torque_error
-
-        # Compute necessary error terms for PD controller
-        derr = error - self.last_err
-        self.last_err = error
-        self.derr_buf.push(derr)
-        spatial_controller = self.kp * error + self.kd * self.derr_buf.average / self.period
-
-        return spatial_controller
-
-    def compute_error_in_eef_frame(self, pose_error, force_torque_error):
-        """
-            Compute error assuming that that the desired pose and force are given
-            in the robot's end-effector frame
-        """
-        eef_to_base = self.pose_in_base_from_name(f"{self.ft_prefix}_eef")[:3, :3]
-
-        eef_pos_error = self.get_error_in_frame(pose_error, eef_to_base.T)
-        eef_wrench_error = self.get_error_in_frame(force_torque_error, eef_to_base.T)
-
-        eef_pos_error_sel = self.selection_matrix * eef_pos_error
-        eef_wrench_error_sel = (np.ones_like(self.selection_matrix) - self.selection_matrix) * eef_wrench_error
-
-        # base frame error
-        error = self.stiffness * eef_pos_error_sel + eef_wrench_error_sel
-
-        # Compute necessary error terms for PD controller
-        derr = error - self.last_err
-        self.last_err = error
-        self.derr_buf.push(derr)
-        spatial_controller = self.kp * error + self.kd * self.derr_buf.average / self.period
-
-        return self.get_error_in_frame(spatial_controller, eef_to_base)
-
-    def get_error_in_frame(self, error, A_to_B):
-        pos_error = A_to_B @ error[:3]  # transpose,not inv since its just rotation, without translation
+    def rotate_by_transformation(self, error, A_to_B):
+        pos_error = A_to_B @ error[:3]
         ori_error = A_to_B @ error[3:]
         return np.concatenate([pos_error, ori_error])
 
@@ -537,49 +563,6 @@ class ComplianceController(Controller):
             )  # goal is the total orientation error
             self.relative_ori = np.zeros(3)  # relative orientation always starts at 0
 
-    @property
-    def current_wrench(self):
-        return self.wrench_in_base_frame_buf.average
-
-    @property
-    def eef_wrench(self):
-        return self.wrench_in_eef_frame_buf.average
-
-    @ property
-    def control_limits(self):
-        """
-        Returns the limits over this controller's action space, overrides the superclass property
-        Returns the following (generalized for both high and low limits), based on the impedance mode:
-
-            :Mode `'fixed'`: [joint pos command]
-            :Mode `'variable'`: [damping_ratio values, kp values, joint pos command]
-            :Mode `'variable_kp'`: [kp values, joint pos command]
-
-        Returns:
-            2-tuple:
-
-                - (np.array) minimum action values
-                - (np.array) maximum action values
-        """
-        if self.compliance_mode == "variable_stiffness":
-            low = np.concatenate([self.input_min, self.force_min, self.torque_min, self.stiffness_min])
-            high = np.concatenate([self.input_max, self.force_max,  self.torque_max, self.stiffness_max])
-        elif self.compliance_mode == "variable_stiffness_p_gains":
-            low = np.concatenate([self.input_min,  self.force_min, self.torque_min, self.stiffness_min, self.kp_min])
-            high = np.concatenate([self.input_max, self.force_max, self.torque_max, self.stiffness_max, self.kp_max])
-        elif self.compliance_mode == "variable_stiffness_full" or self.compliance_mode == "variable_stiffness_diag_only":
-            low = np.concatenate([self.input_min,  self.stiffness_min])
-            high = np.concatenate([self.input_max, self.stiffness_max])
-        else:  # This is case "fixed"
-            low = np.concatenate([self.input_min, self.force_min, self.torque_min])
-            high = np.concatenate([self.input_max, self.force_max, self.torque_max])
-            # low, high = self.input_min, self.input_max
-        return low, high
-
-    @ property
-    def name(self):
-        return "COMPLIANCE"
-
     def get_sensor_measurement(self, sensor_name):
         """
         Grabs relevant sensor data from the sim object
@@ -628,3 +611,46 @@ class ComplianceController(Controller):
         rot_in_B = self.sim.data.site_xmat[self.sim.model.site_name2id(B)].reshape([3, 3])
         pose_in_B = T.make_pose(pos_in_B, rot_in_B)
         return T.pose_in_A_to_pose_in_B(pose_in_A, pose_in_B)
+
+    @ property
+    def current_wrench(self):
+        return self.wrench_in_base_frame_buf.average
+
+    @ property
+    def eef_wrench(self):
+        return self.wrench_in_eef_frame_buf.average
+
+    @ property
+    def control_limits(self):
+        """
+        Returns the limits over this controller's action space, overrides the superclass property
+        Returns the following (generalized for both high and low limits), based on the impedance mode:
+
+            :Mode `'fixed'`: [joint pos command]
+            :Mode `'variable'`: [damping_ratio values, kp values, joint pos command]
+            :Mode `'variable_kp'`: [kp values, joint pos command]
+
+        Returns:
+            2-tuple:
+
+                - (np.array) minimum action values
+                - (np.array) maximum action values
+        """
+        if self.compliance_mode == "variable_stiffness":
+            low = np.concatenate([self.input_min, self.force_min, self.torque_min, self.stiffness_min])
+            high = np.concatenate([self.input_max, self.force_max,  self.torque_max, self.stiffness_max])
+        elif self.compliance_mode == "variable_stiffness_p_gains":
+            low = np.concatenate([self.input_min,  self.force_min, self.torque_min, self.stiffness_min, self.kp_min])
+            high = np.concatenate([self.input_max, self.force_max, self.torque_max, self.stiffness_max, self.kp_max])
+        elif self.compliance_mode == "variable_stiffness_full" or self.compliance_mode == "variable_stiffness_diag_only":
+            low = np.concatenate([self.input_min,  self.stiffness_min])
+            high = np.concatenate([self.input_max, self.stiffness_max])
+        else:  # This is case "fixed"
+            low = np.concatenate([self.input_min, self.force_min, self.torque_min])
+            high = np.concatenate([self.input_max, self.force_max, self.torque_max])
+            # low, high = self.input_min, self.input_max
+        return low, high
+
+    @ property
+    def name(self):
+        return "COMPLIANCE"
