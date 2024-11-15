@@ -312,7 +312,7 @@ class MortarObject(MujocoXMLObject):
         super().__init__(
             xml_path_completion("objects/mortar_mesh.xml"),
             name=name,
-            joints=[dict(type="free", damping="0.005")],
+            joints=None,
             obj_type="all",
             duplicate_collision_geoms=True,
         )
@@ -328,7 +328,7 @@ class MortarSDFObject(MujocoXMLObject):
         super().__init__(
             xml_path_completion("objects/mortar_sdf.xml"),
             name=name,
-            joints=[dict(type="free", damping="0.005")],
+            joints=None,
             obj_type="all",
             duplicate_collision_geoms=True,
         )
