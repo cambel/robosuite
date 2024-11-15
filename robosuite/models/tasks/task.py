@@ -85,6 +85,7 @@ class Task(MujocoWorldBase):
                 type(mujoco_obj)
             )
             # Merge this object
+            self.merge_extensions(mujoco_obj)
             self.merge_assets(mujoco_obj)
             self.worldbody.append(mujoco_obj.get_obj())
 

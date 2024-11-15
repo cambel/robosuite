@@ -411,7 +411,7 @@ def mat2euler(rmat, axes="sxyz"):
     j = _NEXT_AXIS[i + parity]
     k = _NEXT_AXIS[i - parity + 1]
 
-    M = np.array(rmat, dtype=np.float32, copy=False)[:3, :3]
+    M = np.asarray(rmat, dtype=np.float32)[:3, :3]
     if repetition:
         sy = math.sqrt(M[i, j] * M[i, j] + M[i, k] * M[i, k])
         if sy > EPS:
@@ -713,7 +713,7 @@ def rotation_matrix(angle, direction, point=None):
     M[:3, :3] = R
     if point is not None:
         # rotation not around origin
-        point = np.array(point[:3], dtype=np.float32, copy=False)
+        point = np.asarray(point[:3], dtype=np.float32)
         M[:3, 3] = point - np.dot(R, point)
     return M
 
@@ -846,7 +846,7 @@ def unit_vector(data, axis=None, out=None):
             return data
     else:
         if out is not data:
-            out[:] = np.array(data, copy=False)
+            out[:] = np.asarray(data)
         data = out
     length = np.atleast_1d(np.sum(data * data, axis))
     np.sqrt(length, length)
@@ -879,6 +879,90 @@ def get_orientation_error(target_orn, current_orn):
     pinv[2, :] = [-current_orn[3], -current_orn[2], current_orn[1], current_orn[0]]
     orn_error = 2.0 * pinv.dot(np.array(target_orn))
     return orn_error
+
+
+def skew(v):
+    """
+    Returns the 3x3 skew matrix.
+    The skew matrix is a square matrix M{A} whose transpose is also its
+    negative; that is, it satisfies the condition M{-A = A^T}.
+    @type v: array
+    @param v: The input array
+    @rtype: array, shape (3,3)
+    @return: The resulting skew matrix
+    """
+    skv = np.roll(np.roll(np.diag(np.asarray(v).flatten()), 1, 1), -1, 0)
+    return (skv - skv.T)
+
+
+def quaternions_orientation_error(target_orn, current_orn):
+    """
+    Calculates the orientation error between two quaternions
+    Qd is the desired orientation
+    Qc is the current orientation
+    both with respect to the same fixed frame
+
+    return vector part
+    """
+    ne = current_orn[3]*target_orn[3] + np.dot(current_orn[:3], target_orn[:3])
+    ee = current_orn[3]*target_orn[:3] - target_orn[3] * current_orn[:3] + np.dot(skew(current_orn[:3]), target_orn[:3])
+    ee *= np.sign(ne)  # disambiguate the sign of the quaternion
+    return ee
+
+
+def limit_quaternion_rotation(q1, q2, max_angle_rad):
+    """
+    Compute an intermediate quaternion that lies on the shortest path from q1 to q2,
+    limited by the maximum allowed rotation angle.
+
+    Parameters:
+    q1, q2: numpy arrays of shape (4,) representing quaternions in format [x, y, z, w]
+    max_angle_rad: float, maximum allowed rotation angle in radians
+
+    Returns:
+    numpy.ndarray: The limited quaternion in [x, y, z, w] format
+    """
+    # Ensure quaternions are normalized
+    q1 = q1 / np.linalg.norm(q1)
+    q2 = q2 / np.linalg.norm(q2)
+
+    # Calculate the dot product (note: w component is at index 3)
+    dot = np.dot(q1, q2)
+
+    # If the dot product is negative, negate q2
+    # This ensures we take the shortest path
+    if dot < 0:
+        q2 = -q2
+        dot = -dot
+
+    # Clamp dot product to [-1, 1] for numerical stability
+    dot = np.clip(dot, -1.0, 1.0)
+
+    # Calculate the total angle between quaternions
+    total_angle = np.arccos(dot)  # Note: This is half the rotation angle
+
+    # If twice the total angle is less than the maximum, return q2
+    if 2 * total_angle <= max_angle_rad:
+        return q2
+
+    # Calculate the interpolation parameter for the maximum allowed angle
+    t = max_angle_rad / (2 * total_angle)
+
+    # Calculate the relative rotation quaternion from q1 to q2
+    relative_rot = q2 - q1 * dot
+    relative_rot_norm = np.linalg.norm(relative_rot)
+
+    if relative_rot_norm < 1e-7:  # Handle case where quaternions are very close
+        return q1
+
+    relative_rot = relative_rot / relative_rot_norm
+
+    # Construct the limited quaternion using the half-angle formula
+    half_max_angle = max_angle_rad / 2
+    result = q1 * np.cos(half_max_angle) + relative_rot * np.sin(half_max_angle)
+
+    # Ensure the result is normalized
+    return result / np.linalg.norm(result)
 
 
 def get_pose_error(target_pose, current_pose):
@@ -927,6 +1011,24 @@ def matrix_inverse(matrix):
         np.array: 2d-array representing the matrix inverse
     """
     return np.linalg.inv(matrix)
+
+
+def rotate_2d_point(input, rot):
+    """
+    rotate a 2d vector counterclockwise
+
+    Args:
+        input (np.array): 1d-array representing 2d vector
+        rot (float): rotation value
+
+    Returns:
+        np.array: rotated 1d-array
+    """
+    input_x, input_y = input
+    x = input_x * np.cos(rot) - input_y * np.sin(rot)
+    y = input_x * np.sin(rot) + input_y * np.cos(rot)
+
+    return np.array([x, y])
 
 
 @jit_decorator
@@ -1015,3 +1117,39 @@ def motion_frame_transform(bTa):
     bXa[3:, :3] = np.dot(_skew_symmetric_translation(bPa), bRa)
     bXa[3:, 3:] = bRa
     return bXa
+
+
+def rotate_vector_by_quaternion(vector, quaternion):
+    """
+    Rotate a 3D vector using a quaternion rotation.
+
+    Args:
+        vector (np.array): 3D vector [x, y, z]
+        quaternion (np.array): Quaternion in format [x, y, z, w]
+
+    Returns:
+        np.array: Rotated vector
+    """
+    # Normalize the quaternion
+    q = quaternion / np.linalg.norm(quaternion)
+    q_x, q_y, q_z, q_w = q
+
+    # Convert vector to pure quaternion (w = 0)
+    v_x, v_y, v_z = vector
+
+    # First multiply: q * v
+    temp_w = -q_x*v_x - q_y*v_y - q_z*v_z
+    temp_x = q_w*v_x + q_y*v_z - q_z*v_y
+    temp_y = q_w*v_y - q_x*v_z + q_z*v_x
+    temp_z = q_w*v_z + q_x*v_y - q_y*v_x
+
+    # Second multiply: result * q_conjugate
+    q_conjugate = np.array([-q_x, -q_y, -q_z, q_w])
+
+    result_w = -temp_x*(-q_x) - temp_y*(-q_y) - temp_z*(-q_z) + temp_w*q_w
+    result_x = temp_w*(-q_x) + temp_y*(-q_z) - temp_z*(-q_y) + temp_x*q_w
+    result_y = temp_w*(-q_y) - temp_x*(-q_z) + temp_z*(-q_x) + temp_y*q_w
+    result_z = temp_w*(-q_z) + temp_x*(-q_y) - temp_y*(-q_x) + temp_z*q_w
+
+    # Return just the vector part (x, y, z)
+    return np.array([result_x, result_y, result_z])

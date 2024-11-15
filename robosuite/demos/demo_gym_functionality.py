@@ -59,9 +59,9 @@ if __name__ == "__main__":
         for t in range(1000):
             env.render()
             action = env.action_space.sample()
-            observation, reward, done, info = env.step(action)
-            if done:
-                print(f"Episode {i_episode+1} out of {ep_nr} finished after {t+1} timesteps")
-                observation = env.reset()
-                env.close()
+            observation, reward, terminated, truncated, info = env.step(action)
+            if terminated or truncated:
+                print("Episode finished after {} timesteps".format(t + 1))
+                observation, info = env.reset()
                 break
+        env.close()

@@ -2,6 +2,11 @@
 Useful classes for supporting DeepMind MuJoCo binding.
 """
 
+import robosuite.macros as macros
+import subprocess
+import platform
+import ctypes.util
+import ctypes
 import gc
 import os
 from tempfile import TemporaryDirectory
@@ -14,13 +19,6 @@ import numpy as np
 
 _MjSim_render_lock = Lock()
 
-import ctypes
-import ctypes.util
-import os
-import platform
-import subprocess
-
-import robosuite.macros as macros
 
 _SYSTEM = platform.system()
 if _SYSTEM == "Windows":
@@ -42,22 +40,6 @@ if macros.MUJOCO_GPU_RENDERING and os.environ.get("MUJOCO_GL", None) not in ["os
     else:
         os.environ["MUJOCO_GL"] = "egl"
 _MUJOCO_GL = os.environ.get("MUJOCO_GL", "").lower().strip()
-if _MUJOCO_GL not in ("disable", "disabled", "off", "false", "0"):
-    _VALID_MUJOCO_GL = ("enable", "enabled", "on", "true", "1", "glfw", "")
-    if _SYSTEM == "Linux":
-        _VALID_MUJOCO_GL += ("glx", "egl", "osmesa")
-    elif _SYSTEM == "Windows":
-        _VALID_MUJOCO_GL += ("wgl",)
-    elif _SYSTEM == "Darwin":
-        _VALID_MUJOCO_GL += ("cgl",)
-    if _MUJOCO_GL not in _VALID_MUJOCO_GL:
-        raise RuntimeError(f"invalid value for environment variable MUJOCO_GL: {_MUJOCO_GL}")
-    if _SYSTEM == "Linux" and _MUJOCO_GL == "osmesa":
-        from robosuite.renderers.context.osmesa_context import OSMesaGLContext as GLContext
-    elif _SYSTEM == "Linux" and _MUJOCO_GL == "egl":
-        from robosuite.renderers.context.egl_context import EGLGLContext as GLContext
-    else:
-        from robosuite.renderers.context.glfw_context import GLFWGLContext as GLContext
 
 
 class MjRenderContext:
@@ -69,6 +51,25 @@ class MjRenderContext:
     """
 
     def __init__(self, sim, offscreen=True, device_id=-1, max_width=640, max_height=480):
+
+        # move this logic from outside to inside class to avoid multiprocessing issues
+        if _MUJOCO_GL not in ("disable", "disabled", "off", "false", "0"):
+            _VALID_MUJOCO_GL = ("enable", "enabled", "on", "true", "1", "glfw", "")
+            if _SYSTEM == "Linux":
+                _VALID_MUJOCO_GL += ("glx", "egl", "osmesa")
+            elif _SYSTEM == "Windows":
+                _VALID_MUJOCO_GL += ("wgl",)
+            elif _SYSTEM == "Darwin":
+                _VALID_MUJOCO_GL += ("cgl",)
+            if _MUJOCO_GL not in _VALID_MUJOCO_GL:
+                raise RuntimeError(f"invalid value for environment variable MUJOCO_GL: {_MUJOCO_GL}")
+            if _SYSTEM == "Linux" and _MUJOCO_GL == "osmesa":
+                from robosuite.renderers.context.osmesa_context import OSMesaGLContext as GLContext
+            elif _SYSTEM == "Linux" and _MUJOCO_GL == "egl":
+                from robosuite.renderers.context.egl_context import EGLGLContext as GLContext
+            else:
+                from robosuite.renderers.context.glfw_context import GLFWGLContext as GLContext
+
         assert offscreen, "only offscreen supported for now"
         self.sim = sim
         self.offscreen = offscreen
@@ -88,7 +89,8 @@ class MjRenderContext:
         self.data = sim.data
 
         # create default scene
-        self.scn = mujoco.MjvScene(sim.model._model, maxgeom=1000)
+        # set maxgeom to 10k to support large-scale scenes
+        self.scn = mujoco.MjvScene(sim.model._model, maxgeom=10000)
 
         # camera
         self.cam = mujoco.MjvCamera()
@@ -119,11 +121,6 @@ class MjRenderContext:
             self.con.free()
             del self.con
             self._set_mujoco_context_and_buffers()
-
-    def upload_texture(self, tex_id):
-        """Uploads given texture to the GPU"""
-        self.gl_ctx.make_current()
-        mujoco.mjr_uploadTexture(self.model, self.con, tex_id)
 
     def render(self, width, height, camera_id=None, segmentation=False):
         viewport = mujoco.MjrRect(0, 0, width, height)
@@ -172,7 +169,8 @@ class MjRenderContext:
 
         ret_img = rgb_img
         if segmentation:
-            seg_img = rgb_img[:, :, 0] + rgb_img[:, :, 1] * (2**8) + rgb_img[:, :, 2] * (2**16)
+            uint32_rgb_img = rgb_img.astype(np.int32)
+            seg_img = uint32_rgb_img[:, :, 0] + uint32_rgb_img[:, :, 1] * (2**8) + uint32_rgb_img[:, :, 2] * (2**16)
             seg_img[seg_img >= (self.scn.ngeom + 1)] = 0
             seg_ids = np.full((self.scn.ngeom + 1, 2), fill_value=-1, dtype=np.int32)
 
@@ -191,12 +189,16 @@ class MjRenderContext:
     def upload_texture(self, tex_id):
         """Uploads given texture to the GPU."""
         self.gl_ctx.make_current()
-        mujoco.mjr_uploadTexture(self.model, self.con, tex_id)
+        mujoco.mjr_uploadTexture(self.model._model, self.con, tex_id)
 
     def __del__(self):
         # free mujoco rendering context and GL rendering context
         self.con.free()
-        self.gl_ctx.free()
+        try:
+            self.gl_ctx.free()
+        except Exception:
+            # avoid getting OpenGL.error.GLError
+            pass
         del self.con
         del self.gl_ctx
         del self.scn
@@ -231,8 +233,8 @@ class MjSimState:
         idx_qvel = idx_qpos + sim.model.nq
 
         time = array[idx_time]
-        qpos = array[idx_qpos : idx_qpos + sim.model.nq]
-        qvel = array[idx_qvel : idx_qvel + sim.model.nv]
+        qpos = array[idx_qpos: idx_qpos + sim.model.nq]
+        qvel = array[idx_qvel: idx_qvel + sim.model.nv]
         assert sim.model.na == 0
 
         return cls(time=time, qpos=qpos, qvel=qvel)
@@ -253,8 +255,8 @@ class _MjModelMeta(type):
             if not attr.startswith("_"):
                 if attr not in dct:
                     # pylint: disable=protected-access
-                    fget = lambda self, attr=attr: getattr(self._model, attr)
-                    fset = lambda self, value, attr=attr: setattr(self._model, attr, value)
+                    def fget(self, attr=attr): return getattr(self._model, attr)
+                    def fset(self, value, attr=attr): return setattr(self._model, attr, value)
                     # pylint: enable=protected-access
                     dct[attr] = property(fget, fset)
         return super().__new__(cls, name, bases, dct)
@@ -275,12 +277,6 @@ class MjModel(metaclass=_MjModelMeta):
 
         # make useful mappings such as _body_name2id and _body_id2name
         self.make_mappings()
-
-    @classmethod
-    def from_xml_path(cls, xml_path):
-        """Creates an MjModel instance from a path to a model XML file."""
-        model_ptr = _get_model_ptr_from_xml(xml_path=xml_path)
-        return cls(model_ptr)
 
     def __del__(self):
         # free mujoco model
@@ -419,12 +415,16 @@ class MjModel(metaclass=_MjModelMeta):
 
     def camera_id2name(self, id):
         """Get camera name from camera id."""
+        if id == -1:
+            return "free"
         if id not in self._camera_id2name:
             raise ValueError("No camera with id %d exists." % id)
         return self._camera_id2name[id]
 
     def camera_name2id(self, name):
         """Get camera id from  camera name."""
+        if name == "free":
+            return -1
         if name not in self._camera_name2id:
             raise ValueError(
                 'No "camera" with name %s exists. Available "camera" names = %s.' % (name, self.camera_names)
@@ -564,8 +564,8 @@ class _MjDataMeta(type):
             if not attr.startswith("_"):
                 if attr not in dct:
                     # pylint: disable=protected-access
-                    fget = lambda self, attr=attr: getattr(self._data, attr)
-                    fset = lambda self, value, attr=attr: setattr(self._data, attr, value)
+                    def fget(self, attr=attr): return getattr(self._data, attr)
+                    def fset(self, value, attr=attr): return setattr(self._data, attr, value)
                     # pylint: enable=protected-access
                     dct[attr] = property(fget, fset)
         return super().__new__(cls, name, bases, dct)
@@ -999,7 +999,7 @@ class MjData(metaclass=_MjDataMeta):
 
     def set_joint_qpos(self, name, value):
         """
-        Set the velocities of a joint using name.
+        Set the position of a joint using name.
 
         Args:
             name (str): The name of a joint
@@ -1033,7 +1033,7 @@ class MjData(metaclass=_MjDataMeta):
 
     def set_joint_qvel(self, name, value):
         """
-        Set the velocities of a mjo using name.
+        Set the velocities of a joint using name.
 
         Args:
             name (str): The name of a joint
@@ -1061,8 +1061,8 @@ class MjSim:
             model: should be an MjModel instance created via a factory function
                 such as mujoco.MjModel.from_xml_string(xml)
         """
-        self.model = MjModel(model)
-        self.data = MjData(self.model)
+        self.model: MjModel = MjModel(model)
+        self.data: MjData = MjData(self.model)
 
         # offscreen render context object
         self._render_context_offscreen = None
@@ -1090,6 +1090,14 @@ class MjSim:
     def step(self, with_udd=True):
         """Step simulation."""
         mujoco.mj_step(self.model._model, self.data._data)
+
+    def step1(self):
+        """Step1 (before actions are set)."""
+        mujoco.mj_step1(self.model._model, self.data._data)
+
+    def step2(self):
+        """Step2 (after actions are set)."""
+        mujoco.mj_step2(self.model._model, self.data._data)
 
     def render(
         self,
@@ -1176,16 +1184,59 @@ class MjSim:
         del self
         gc.collect()
 
+    def get_body_inertial_properties(self, body_name):
+        """
+        Get inertial properties of a specified body in MuJoCo.
+
+        Args:
+            model: MuJoCo model object
+            data: MuJoCo data object
+            body_name: String name of the body
+
+        Returns:
+            dict: Dictionary containing inertial properties
+        """
+        # Get body ID from name
+        body_id = self.model.body_name2id(body_name)
+
+        if body_id == -1:
+            raise ValueError(f"Body '{body_name}' not found in the model")
+
+        # Get inertial properties
+        mass = self.model._model.body_mass[body_id]
+        inertia = self.model._model.body_inertia[body_id].copy()  # Principal moments of inertia [ixx, iyy, izz]
+
+        # Get center of mass position in body frame
+        com = self.model._model.body_ipos[body_id].copy()
+
+        # Get inertial frame orientation (quaternion)
+        quat = self.model._model.body_iquat[body_id].copy()
+
+        # Get current position and orientation in world frame
+        pos = self.data.get_body_xpos(body_name)
+        rot_mat = self.data.get_body_xmat(body_name).reshape(3, 3)
+
+        return {
+            'mass': mass,
+            'inertia': inertia,
+            'local_com': com,
+            'inertial_frame_quat': quat,
+            'world_pos': pos,
+            'world_rot_mat': rot_mat
+        }
+
+
 class MjSimInteractive(MjSim):
     """
     Modified version of MjSim that enables interactive visualization through mujoco.viewer
     """
+
     def __init__(self, model):
         super().__init__(model)
 
         import mujoco.viewer
         self.viewer = mujoco.viewer.launch_passive(self.model._model, self.data._data)
-    
+
     def step(self, with_udd=True):
         super().step(with_udd=with_udd)
         self.viewer.sync()

@@ -43,9 +43,6 @@ Choice of using either inverse kinematics controller (ik) or operational space c
 Main difference is that user inputs with ik's rotations are always taken relative to eef coordinate frame, whereas
     user inputs with osc's rotations are taken relative to global frame (i.e.: static / camera frame of reference).
 
-    Notes:
-        OSC also tends to be more computationally efficient since IK relies on the backend pybullet IK solver.
-
 
 ***Choose environment specifics with the following arguments***
 
@@ -58,17 +55,14 @@ Main difference is that user inputs with ik's rotations are always taken relativ
         only accept a single single-armed robot name
 
     --config: Exclusively applicable and only should be specified for "TwoArm..." environments. Specifies the robot
-        configuration desired for the task. Options are {"bimanual", "single-arm-parallel", and "single-arm-opposed"}
+        configuration desired for the task. Options are {"parallel" and "opposed"}
 
-            -"bimanual": Sets up the environment for a single bimanual robot. Expects a single bimanual robot name to
-                be specified in the --robots argument
-
-            -"single-arm-parallel": Sets up the environment such that two single-armed robots are stationed next to
-                each other facing the same direction. Expects a 2-tuple of single-armed robot names to be specified
+            -"parallel": Sets up the environment such that two robots are stationed next to
+                each other facing the same direction. Expects a 2-tuple of robot names to be specified
                 in the --robots argument.
 
-            -"single-arm-opposed": Sets up the environment such that two single-armed robots are stationed opposed from
-                each other, facing each other from opposite directions. Expects a 2-tuple of single-armed robot names
+            -"opposed": Sets up the environment such that two robots are stationed opposed from
+                each other, facing each other from opposite directions. Expects a 2-tuple of robot names
                 to be specified in the --robots argument.
 
     --arm: Exclusively applicable and only should be specified for "TwoArm..." environments. Specifies which of the
@@ -89,18 +83,19 @@ Examples:
         $ python demo_device_control.py --environment TwoArmLift --robots Baxter --config bimanual --arm left --controller osc
 
     For two-arm multi single-arm robot environment:
-        $ python demo_device_control.py --environment TwoArmLift --robots Sawyer Sawyer --config single-arm-parallel --controller osc
+        $ python demo_device_control.py --environment TwoArmLift --robots Sawyer Sawyer --config parallel --controller osc
 
 
 """
 
 import argparse
+import time
 
 import numpy as np
 
 import robosuite as suite
-from robosuite import load_controller_config
-from robosuite.utils.input_utils import input2action
+from robosuite import load_composite_controller_config
+from robosuite.controllers.composite.composite_controller import WholeBody
 from robosuite.wrappers import VisualizationWrapper
 
 if __name__ == "__main__":
@@ -109,30 +104,33 @@ if __name__ == "__main__":
     parser.add_argument("--environment", type=str, default="Lift")
     parser.add_argument("--robots", nargs="+", type=str, default="Panda", help="Which robot(s) to use in the env")
     parser.add_argument(
-        "--config", type=str, default="single-arm-opposed", help="Specified environment configuration if necessary"
+        "--config", type=str, default="default", help="Specified environment configuration if necessary"
     )
     parser.add_argument("--arm", type=str, default="right", help="Which arm to control (eg bimanual) 'right' or 'left'")
     parser.add_argument("--switch-on-grasp", action="store_true", help="Switch gripper control on gripper action")
     parser.add_argument("--toggle-camera-on-grasp", action="store_true", help="Switch camera angle on gripper action")
-    parser.add_argument("--controller", type=str, default="osc", help="Choice of controller. Can be 'ik' or 'osc'")
+    parser.add_argument(
+        "--controller",
+        type=str,
+        default=None,
+        help="Choice of controller. Can be generic (eg. 'BASIC' or 'WHOLE_BODY_MINK_IK') or json file (see robosuite/controllers/config for examples) or None to get the robot's default controller if it exists",
+    )
     parser.add_argument("--device", type=str, default="keyboard")
     parser.add_argument("--pos-sensitivity", type=float, default=1.0, help="How much to scale position user inputs")
     parser.add_argument("--rot-sensitivity", type=float, default=1.0, help="How much to scale rotation user inputs")
+    parser.add_argument(
+        "--max_fr",
+        default=20,
+        type=int,
+        help="Sleep when simluation runs faster than specified frame rate; 20 fps is real time.",
+    )
     args = parser.parse_args()
 
-    # Import controller config for EE IK or OSC (pos/ori)
-    if args.controller == "ik":
-        controller_name = "IK_POSE"
-    elif args.controller == "osc":
-        controller_name = "OSC_POSE"
-    elif args.controller == "oscft":
-        controller_name = "OSC_POSE_FT"
-    else:
-        print("Error: Unsupported controller specified. Must be either 'ik' 'osc 'or 'oscft'!")
-        raise ValueError
-
     # Get controller config
-    controller_config = load_controller_config(default_controller=controller_name)
+    controller_config = load_composite_controller_config(
+        controller=args.controller,
+        robot=args.robots[0],
+    )
 
     # Create argument configuration
     config = {
@@ -182,12 +180,16 @@ if __name__ == "__main__":
     if args.device == "keyboard":
         from robosuite.devices import Keyboard
 
-        device = Keyboard(pos_sensitivity=args.pos_sensitivity, rot_sensitivity=args.rot_sensitivity)
+        device = Keyboard(env=env, pos_sensitivity=args.pos_sensitivity, rot_sensitivity=args.rot_sensitivity)
         env.viewer.add_keypress_callback(device.on_press)
     elif args.device == "spacemouse":
         from robosuite.devices import SpaceMouse
 
-        device = SpaceMouse(pos_sensitivity=args.pos_sensitivity, rot_sensitivity=args.rot_sensitivity)
+        device = SpaceMouse(env=env, pos_sensitivity=args.pos_sensitivity, rot_sensitivity=args.rot_sensitivity)
+    elif args.device == "mjgui":
+        from robosuite.devices.mjgui import MJGUI
+
+        device = MJGUI(env=env)
     else:
         raise Exception("Invalid device choice: choose either 'keyboard' or 'spacemouse'.")
 
@@ -205,51 +207,59 @@ if __name__ == "__main__":
 
         # Initialize device control
         device.start_control()
+        all_prev_gripper_actions = [
+            {
+                f"{robot_arm}_gripper": np.repeat([0], robot.gripper[robot_arm].dof)
+                for robot_arm in robot.arms
+                if robot.gripper[robot_arm].dof > 0
+            }
+            for robot in env.robots
+        ]
 
+        # Loop until we get a reset from the input or the task completes
         while True:
+            start = time.time()
+
             # Set active robot
-            active_robot = env.robots[0] if args.config == "bimanual" else env.robots[args.arm == "left"]
+            active_robot = env.robots[device.active_robot]
 
             # Get the newest action
-            action, grasp = input2action(
-                device=device, robot=active_robot, active_arm=args.arm, env_configuration=args.config, control_delta=True
-            )
+            input_ac_dict = device.input2action()
 
             # If action is none, then this a reset so we should break
-            if action is None:
+            if input_ac_dict is None:
                 break
 
-            # If the current grasp is active (1) and last grasp is not (-1) (i.e.: grasping input just pressed),
-            # toggle arm control and / or camera viewing angle if requested
-            if last_grasp < 0 < grasp:
-                if args.switch_on_grasp:
-                    args.arm = "left" if args.arm == "right" else "right"
-                if args.toggle_camera_on_grasp:
-                    cam_id = (cam_id + 1) % num_cam
-                    env.viewer.set_camera(camera_id=cam_id)
-            # Update last grasp
-            last_grasp = grasp
+            from copy import deepcopy
 
-            # Fill out the rest of the action space if necessary
-            rem_action_dim = env.action_dim - action.size
-            if rem_action_dim > 0:
-                # Initialize remaining action space
-                rem_action = np.zeros(rem_action_dim)
-                # This is a multi-arm setting, choose which arm to control and fill the rest with zeros
-                if args.arm == "right":
-                    action = np.concatenate([action, rem_action])
-                elif args.arm == "left":
-                    action = np.concatenate([rem_action, action])
+            action_dict = deepcopy(input_ac_dict)  # {}
+            # set arm actions
+            for arm in active_robot.arms:
+                if isinstance(active_robot.composite_controller, WholeBody):  # input type passed to joint_action_policy
+                    controller_input_type = active_robot.composite_controller.joint_action_policy.input_type
                 else:
-                    # Only right and left arms supported
-                    print(
-                        "Error: Unsupported arm specified -- "
-                        "must be either 'right' or 'left'! Got: {}".format(args.arm)
-                    )
-            elif rem_action_dim < 0:
-                # We're in an environment with no gripper action space, so trim the action space to be the action dim
-                action = action[: env.action_dim]
+                    controller_input_type = active_robot.part_controllers[arm].input_type
 
-            # Step through the simulation and render
-            obs, reward, done, info = env.step(action)
+                if controller_input_type == "delta":
+                    action_dict[arm] = input_ac_dict[f"{arm}_delta"]
+                elif controller_input_type == "absolute":
+                    action_dict[arm] = input_ac_dict[f"{arm}_abs"]
+                else:
+                    raise ValueError
+
+            # Maintain gripper state for each robot but only update the active robot with action
+            env_action = [robot.create_action_vector(all_prev_gripper_actions[i]) for i, robot in enumerate(env.robots)]
+            env_action[device.active_robot] = active_robot.create_action_vector(action_dict)
+            env_action = np.concatenate(env_action)
+            for gripper_ac in all_prev_gripper_actions[device.active_robot]:
+                all_prev_gripper_actions[device.active_robot][gripper_ac] = action_dict[gripper_ac]
+
+            env.step(env_action)
             env.render()
+
+            # limit frame rate if necessary
+            if args.max_fr is not None:
+                elapsed = time.time() - start
+                diff = 1 / args.max_fr - elapsed
+                if diff > 0:
+                    time.sleep(diff)

@@ -1,13 +1,13 @@
 from collections import OrderedDict
 from copy import deepcopy
+from typing import List
 
 import numpy as np
 
 import robosuite.macros as macros
-from robosuite.controllers import reset_controllers
 from robosuite.environments.base import MujocoEnv
 from robosuite.robots import ROBOT_CLASS_MAPPING
-from robosuite.robots.single_arm import SingleArm
+from robosuite.robots.robot import Robot
 from robosuite.utils.mjcf_utils import IMAGE_CONVENTION_MAPPING
 from robosuite.utils.observables import Observable, sensor
 
@@ -70,6 +70,9 @@ class RobotEnv(MujocoEnv):
         control_freq (float): how many control signals to receive in every second. This sets the amount of
             simulation time that passes between every action input.
 
+        lite_physics (bool): Whether to optimize for mujoco forward and step calls to reduce total simulation overhead.
+            Set to False to preserve backward compatibility with datasets collected in robosuite <= 1.4.1.
+
         horizon (int): Every episode lasts for exactly @horizon timesteps.
 
         ignore_done (bool): True if never terminating the environment (ignore @horizon).
@@ -112,6 +115,8 @@ class RobotEnv(MujocoEnv):
 
         robot_configs (list of dict): Per-robot configurations set from any subclass initializers.
 
+        seed (int): environment seed. Default is None, where environment is unseeded, ie. random
+
     Raises:
         ValueError: [Camera obs require offscreen renderer]
         ValueError: [Camera name must be specified to use camera obs]
@@ -121,7 +126,7 @@ class RobotEnv(MujocoEnv):
         self,
         robots,
         env_configuration="default",
-        mount_types="default",
+        base_types="default",
         controller_configs=None,
         initialization_noise=None,
         use_camera_obs=True,
@@ -132,6 +137,7 @@ class RobotEnv(MujocoEnv):
         render_visual_mesh=True,
         render_gpu_device_id=-1,
         control_freq=20,
+        lite_physics=True,
         horizon=1000,
         ignore_done=False,
         hard_reset=True,
@@ -141,8 +147,9 @@ class RobotEnv(MujocoEnv):
         camera_depths=False,
         camera_segmentations=None,
         robot_configs=None,
-        renderer="mujoco",
+        renderer="mjviewer",
         renderer_config=None,
+        seed=None,
     ):
         # First, verify that correct number of robots are being inputted
         self.env_configuration = env_configuration
@@ -152,13 +159,13 @@ class RobotEnv(MujocoEnv):
         robots = list(robots) if type(robots) is list or type(robots) is tuple else [robots]
         self.num_robots = len(robots)
         self.robot_names = robots
-        self.robots: list[SingleArm] = self._input2list(None, self.num_robots)
+        self.robots: List[Robot] = self._input2list(None, self.num_robots)
         self._action_dim = None
 
-        # Mount
-        mount_types = self._input2list(mount_types, self.num_robots)
+        # Robot base
+        base_types = self._input2list(base_types, self.num_robots)
 
-        # Controller
+        # Composite Controller
         controller_configs = self._input2list(controller_configs, self.num_robots)
 
         # Initialization Noise
@@ -201,10 +208,11 @@ class RobotEnv(MujocoEnv):
         self.robot_configs = [
             dict(
                 **{
-                    "controller_config": controller_configs[idx],
-                    "mount_type": mount_types[idx],
+                    "composite_controller_config": controller_configs[idx],
+                    "base_type": base_types[idx],
                     "initialization_noise": initialization_noise[idx],
                     "control_freq": control_freq,
+                    "lite_physics": lite_physics,
                 },
                 **robot_config,
             )
@@ -220,11 +228,13 @@ class RobotEnv(MujocoEnv):
             render_visual_mesh=render_visual_mesh,
             render_gpu_device_id=render_gpu_device_id,
             control_freq=control_freq,
+            lite_physics=lite_physics,
             horizon=horizon,
             ignore_done=ignore_done,
             hard_reset=hard_reset,
             renderer=renderer,
             renderer_config=renderer_config,
+            seed=seed,
         )
 
     def visualize(self, vis_settings):
@@ -509,9 +519,6 @@ class RobotEnv(MujocoEnv):
         """
         # Run superclass reset functionality
         super()._reset_internal()
-
-        # Reset controllers
-        reset_controllers()
 
         # Reset action dim
         self._action_dim = 0

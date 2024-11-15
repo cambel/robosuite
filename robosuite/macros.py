@@ -42,7 +42,7 @@ SPACEMOUSE_PRODUCT_ID = 50734
 GAMEPAD_NAME = "Logitech Gamepad F310"
 
 # If LOGGING LEVEL is set to None, the logger will be turned off
-CONSOLE_LOGGING_LEVEL = "WARN"
+CONSOLE_LOGGING_LEVEL = "INFO"
 # File logging is written to /tmp/robosuite_{time}_{pid}.log by default
 FILE_LOGGING_LEVEL = None
 

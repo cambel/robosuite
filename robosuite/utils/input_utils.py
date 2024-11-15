@@ -40,7 +40,7 @@ def choose_environment():
     return envs[k]
 
 
-def choose_controller():
+def choose_controller(part_controllers=False):
     """
     Prints out controller options, and returns the requested controller name
 
@@ -48,14 +48,13 @@ def choose_controller():
         str: Chosen controller name
     """
     # get the list of all controllers
-    controllers_info = suite.controllers.CONTROLLER_INFO
-    controllers = list(suite.ALL_CONTROLLERS)
+    controllers = list(suite.ALL_PART_CONTROLLERS) if part_controllers else list(suite.ALL_COMPOSITE_CONTROLLERS)
 
     # Select controller to use
     print("Here is a list of controllers in the suite:\n")
 
     for k, controller in enumerate(controllers):
-        print("[{}] {} - {}".format(k, controller, controllers_info[controller]))
+        print("[{}] {}".format(k, controller))
     print()
     try:
         s = input("Choose a controller for the robot " + "(enter a number from 0 to {}): ".format(len(controllers) - 1))
@@ -78,9 +77,8 @@ def choose_multi_arm_config():
     """
     # Get the list of all multi arm configs
     env_configs = {
-        "Single Arms Opposed": "single-arm-opposed",
-        "Single Arms Parallel": "single-arm-parallel",
-        "Bimanual": "bimanual",
+        "Opposed": "opposed",
+        "Parallel": "parallel",
     }
 
     # Select environment configuration
@@ -104,30 +102,28 @@ def choose_multi_arm_config():
     return list(env_configs.values())[k]
 
 
-def choose_robots(exclude_bimanual=False):
+def choose_robots(exclude_bimanual=False, use_humanoids=False):
     """
     Prints out robot options, and returns the requested robot. Restricts options to single-armed robots if
-    @exclude_bimanual is set to True (False by default)
+    @exclude_bimanual is set to True (False by default). Restrict options to humanoids if @use_humanoids is set to True (Flase by default).
 
     Args:
         exclude_bimanual (bool): If set, excludes bimanual robots from the robot options
+        use_humanoids (bool): If set, use humanoid robots
 
     Returns:
         str: Requested robot name
     """
     # Get the list of robots
-    robots = {
-        "Sawyer",
-        "Panda",
-        "Jaco",
-        "Kinova3",
-        "IIWA",
-        "UR5e",
-    }
+    robots = {"Sawyer", "Panda", "Jaco", "Kinova3", "IIWA", "UR5e"}
 
     # Add Baxter if bimanual robots are not excluded
     if not exclude_bimanual:
         robots.add("Baxter")
+        robots.add("GR1")
+        robots.add("GR1UpperBody")
+    if use_humanoids:
+        robots = {"GR1", "GR1UpperBody"}
 
     # Make sure set is deterministically sorted
     robots = sorted(robots)
