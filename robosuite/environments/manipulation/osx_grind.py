@@ -1,6 +1,5 @@
 import multiprocessing
 import numpy as np
-import scipy.spatial as spsp
 
 from robosuite.environments.manipulation.manipulation_env import ManipulationEnv
 from robosuite.models.arenas import TableArena
@@ -10,6 +9,7 @@ from robosuite.models.tasks import ManipulationTask
 from robosuite.utils.ik_solver import MuJoCoIKSolver
 from robosuite.utils.observables import Observable, sensor
 from robosuite.utils.placement_samplers import UniformRandomSampler
+from robosuite.utils.traj_utils import generate_mortar_trajectory
 import robosuite.utils.transform_utils as T
 
 
@@ -42,10 +42,11 @@ DEFAULT_GRIND_CONFIG = {
     # Task settings
     "mortar_height": 0.047,  # (m)
     "mortar_max_radius": 0.04,  # (m)
-    "mortar_mode": "SDF",  # or "CDA" Convex Decomposition Approximation
+    "mortar_mode": "mesh",  # "SDA" or "mesh" Convex Decomposition Approximation
     "spawn_mortar": True,
 
     "reset_with_ik": True,
+    "randomize_reference_trajectory": False,
 
     # misc settings
     "evaluate": False,
@@ -228,7 +229,6 @@ class OSXGrind(ManipulationEnv):
             gripper_types == "Grinder"
         ), "Tried to specify gripper other than Grinder in Grind environment!"
 
-        # self.log_details = log_details
         self.horizon = horizon
 
         self.task_config = task_config
@@ -272,9 +272,20 @@ class OSXGrind(ManipulationEnv):
         self.ft_action = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         # Add an extra waypoint to make sure that every waypoint is
         # tracked before considering the tracking completed
-        self.reference_trajectory = reference_trajectory
+        if reference_trajectory is None:
+            self.randomize_reference_trajectory = True
+            self.reference_trajectory = self._randomize_reference_trajectory()
+        else:
+            self.randomize_reference_trajectory = self.task_config['randomize_reference_trajectory']
+            self.reference_trajectory = reference_trajectory
         self.trajectory_len = len(self.reference_trajectory)
-        self.reference_force = reference_force
+
+        if reference_force is None:
+            desired_contact_force = np.random.uniform(low=3, high=20)
+            self.reference_force = [0, 0, desired_contact_force, 0, 0, 0] * self.trajectory_len
+        else:
+            self.reference_force = reference_force
+
         self.tracking_trajectory_threshold = self.task_config['tracking_trajectory_threshold']
         self.tracking_trajectory_method = self.task_config['tracking_trajectory_method']
         # Verify the proposed impedance mode is supported
@@ -347,37 +358,18 @@ class OSXGrind(ManipulationEnv):
         assert len(action) == len(self.action_indices), \
             f"Size of action {len(action)} does not match expected {len(self.action_indices)}"
 
-        action_kp = np.interp(action, [-1, 1], [0.001, 0.5])  # limits for kp (action from sac)
+        action_kp = np.interp(action, [-1, 1], [0.0001, 0.5])  # limits for kp (action from sac)
         # change controller params
         # self.robots[0].composite_controller.part_controllers['right'].kp[self.action_indices] = action_kp[self.action_indices]
 
         pos_rot_action = np.zeros(6)
 
         if self.reference_force is not None:
-            if self.robots[0].composite_controller.part_controllers['right'].desired_ft_frame == "hand":
-                # If i receive a reference in the gripper frame directly, change it to base frame
-                gripper_in_robot_base = self.robots[0].composite_controller.part_controllers['right'].pose_in_base_from_name(
-                    f"{self.robots[0].composite_controller.part_controllers['right'].ft_prefix}_eef")
-                ee_force, ee_torque = T.force_in_A_to_force_in_B(self.reference_force[self.current_waypoint_index][:3],
-                                                                 self.reference_force[self.current_waypoint_index][3:],
-                                                                 gripper_in_robot_base)  # TODO replace with spalg.convert_wrench
-
-                self.ft_action = np.concatenate([ee_force, ee_torque])
-
-            else:
-                # If i receive a reference in base frame directly
-                self.ft_action = self.reference_force[self.current_waypoint_index]
-            # self.ft_action = self.reference_force[self.current_waypoint_index]
+            self.ft_action = self.reference_force[self.current_waypoint_index]
 
         else:
             # if no force reference given, compute it at each step wrt world frame orientation
-            self.ft_action = self.compute_force_ref(self.robots[0]._hand_pos['right'])
-
-        # update in rendering the cylinder representing the normal force/direction
-        # assume orientation is given perpendicular to mortar surface
-        offset_cylinder_half_size = T.rotate_vector_by_quaternion([0, 0, -self.cylinder_length], self.reference_trajectory[self.current_waypoint_index][3:])
-        self.sim.model.body_pos[self.force_cylinder_body_id] = self.reference_trajectory[self.current_waypoint_index][:3] + offset_cylinder_half_size
-        self.sim.model.body_quat[self.force_cylinder_body_id] = T.convert_quat(self.reference_trajectory[self.current_waypoint_index][3:], "wxyz")
+            self.ft_action = np.zeros(6)
 
         # send action with both pose and wrench to the env
         # send the ft action already in base frame
@@ -392,32 +384,6 @@ class OSXGrind(ManipulationEnv):
 
         self.__log_details__(action, residual_action)
         return super().step(ctr_action)
-
-    def compute_force_ref(self, eef_pose):
-
-        # Calculating  the force at every step
-
-        # Define the bowl surface function and its derivatives
-        def f(xy): return (xy[0]**4 + xy[1]**4) * 11445.39 + (xy[1]**2 * xy[0]**2 * 22890.7) + xy[0]**2 * 3.11558 + xy[1]**2 * 3.11558 - 0.038811
-        def fx(x, y): return 4*x**3 * 11445.39 + y**2 * 2*x * 22890.7 + 2*x * 3.11558
-        def fy(x, y): return 4*y**3 * 11445.39 + 2*y * x**2 * 22890.7 + 2*y * 3.11558
-
-        def normal_vector(x, y):
-            grad = np.array([fx(x, y), fy(x, y), -1])
-            return grad / np.linalg.norm(grad)
-
-        # search in vicinity of eef pose xyz TODO change from search to assumption
-        XY = np.mgrid[eef_pose[0]-0.03:eef_pose[0]+0.03:0.001, eef_pose[0]-0.03:eef_pose[0]+0.03:0.001].reshape(2, -1).T
-        Z = [f(xy) for xy in XY]
-        Z = np.array(Z).reshape(-1, 1)
-        A = np.concatenate([XY, Z], axis=1)
-
-        # find closest point on the mortar to the tip of the eef and calculate normal to surface in that point
-        distance, index = spsp.KDTree(A).query(eef_pose)
-        closest_point = A[index]
-        normal_vect_direction = normal_vector(closest_point[0], closest_point[1])
-
-        return np.concatenate([normal_vect_direction, np.array([0, 0, 0])])  # is it zeroes or sth else
 
     def reward(self, action=None):
 
@@ -487,9 +453,9 @@ class OSXGrind(ManipulationEnv):
             relative_distance[3:] = T.quaternions_orientation_error(ref_quat, self.eef_quat)
 
         # track error of the actions controlled by the policy
-        tracking_pos = T.rotate_vector_by_quaternion(relative_distance[:3], ref_quat)*np.array([1, 1, 0.])
-        # print(f"{tracking_pos=}")
-        self.tracking_error = np.linalg.norm(np.concatenate([tracking_pos, relative_distance[3:]]))
+        tracking_pos = T.rotate_vector_by_quaternion(relative_distance[:3], ref_quat)
+        self.tracking_error = np.linalg.norm(np.concatenate([tracking_pos*np.array([1, 1, 1.]), relative_distance[3:]]))
+        # print(f"{tracking_pos=}", f"{self.tracking_error}")
         return relative_distance
 
     def _compute_relative_wrenches(self):
@@ -527,7 +493,7 @@ class OSXGrind(ManipulationEnv):
         mujoco_arena.set_origin([0, 0, 0])
 
         # initialize objects of interest
-        if self.mortar_mode == "CDA":
+        if self.mortar_mode == "mesh":
             self.mortar = MortarObject(
                 name="mortar",
             )
@@ -539,7 +505,7 @@ class OSXGrind(ManipulationEnv):
                 thickness=0.003
             )
         else:
-            raise ValueError(f"Unsupported mortar_mode '{self.mortar_mode}'. Only CDA and SDF are supported.")
+            raise ValueError(f"Unsupported mortar_mode '{self.mortar_mode}'. Only 'mesh' and 'SDF' are supported.")
 
         # add the "ref force arrow in rendering"
         self.cylinder_radius = 0.002
@@ -597,7 +563,7 @@ class OSXGrind(ManipulationEnv):
         super()._setup_references()
 
         # Additional object references from this env
-        # self.mortar_body_id = self.sim.model.body_name2id(self.mortar.root_body)
+        self.mortar_body_id = self.sim.model.body_name2id(self.mortar.root_body)
         self.force_cylinder_body_id = self.sim.model.body_name2id(self.force_cylinder.root_body)
 
     def _setup_observables(self):
@@ -650,9 +616,19 @@ class OSXGrind(ManipulationEnv):
         """
         Resets simulation internal configurations.
         """
+        self.current_waypoint_index = 0
+        self.collisions = 0
+        self.f_excess = 0
+        self.task_space_exits = 0
+
+        # Update the contact point visual properties
         self.sim.model._model.vis.scale.contactwidth = 0.01
         self.sim.model._model.vis.scale.contactheight = 0.01
 
+        if self.randomize_reference_trajectory:
+            self.reference_trajectory = self._randomize_reference_trajectory()
+
+        # Update the initial position of the robot based on the initial pose of the reference trajectory
         if self.reset_with_ik and self.robots[0].robot_joints is not None:
             ik = MuJoCoIKSolver(self.sim.model, self.sim.data, "gripper0_right_grip_site", joint_indexes=self.robots[0].joint_indexes)
             result = ik.solve_ik(target_pos=self.reference_trajectory[0][:3],
@@ -674,25 +650,8 @@ class OSXGrind(ManipulationEnv):
 
             # Loop through all objects and reset their positions
             for obj_pos, obj_quat, obj in object_placements.values():
-                self.sim.data.set_joint_qpos(obj.joints[0], np.concatenate([np.array(obj_pos), np.array(obj_quat)]))
-
-        # recompute the referece trajectory for each episode, with height dependent on radius
-        y = np.array([0.026, 0.027, 0.03, 0.032])
-        x = np.array([0.008, 0.01, 0.012, 0.015])
-        coefficients = np.polyfit(x, y, deg=2)
-        f = np.poly1d(coefficients)
-
-        # R = 0.01 * np.random.random_sample() + 0.008  # take a random radius inside the mortar
-        # self.num_waypoints = np.random.randint(low=100, high=500)  # take a random number of points for the trajectory
-        # reference_trajectory, self.reference_force = self.recompute_trajectory(R, f(R), self.num_waypoints)
-        # reference_trajectory = np.append(reference_trajectory, [reference_trajectory[-1]], axis=0)
-        # self.reference_trajectory = reference_trajectory
-        # self.trajectory_len = len(self.reference_trajectory)
-
-        self.current_waypoint_index = 0
-        self.collisions = 0
-        self.f_excess = 0
-        self.task_space_exits = 0
+                self.sim.model.body_pos[self.mortar_body_id] = obj_pos
+                self.sim.model.body_quat[self.mortar_body_id] = obj_quat
 
     def recompute_trajectory(self, R, h, num_waypoints):
         # Compute reference trajectory and reference force profile
@@ -792,6 +751,12 @@ class OSXGrind(ManipulationEnv):
                 if self.tracking_error < self.tracking_trajectory_threshold:
                     self.current_waypoint_index += 1
 
+            # update in rendering the cylinder representing the normal force/direction
+            # assume orientation is given perpendicular to mortar surface
+            offset_cylinder_half_size = T.rotate_vector_by_quaternion([0, 0, -self.cylinder_length], self.reference_trajectory[self.current_waypoint_index][3:])
+            self.sim.model.body_pos[self.force_cylinder_body_id] = self.reference_trajectory[self.current_waypoint_index][:3] + offset_cylinder_half_size
+            self.sim.model.body_quat[self.force_cylinder_body_id] = T.convert_quat(self.reference_trajectory[self.current_waypoint_index][3:], "wxyz")
+
         return reward, done, info
 
     def _pre_action(self, action, policy_step=False):
@@ -883,6 +848,19 @@ class OSXGrind(ManipulationEnv):
         abs_ft = np.abs(self.eef_wrench)
         return not np.any(abs_ft > self.force_torque_limits)
 
+    def _randomize_reference_trajectory(self):
+        mortar_diameter = 0.08
+        mortar_inner_height = 0.007
+        num_waypoints = 150
+        desired_height = 0.005
+        inclination_fraction = 0.5
+        initial_orientation = [-0.707,  0.707, 0.0,  0.0]
+        initial_position = [0, 0,  0.8 + mortar_inner_height]
+        reference_trajectory = generate_mortar_trajectory(mortar_diameter=mortar_diameter, desired_height=desired_height,
+                                                          n_steps=num_waypoints, default_quat=initial_orientation, fraction=inclination_fraction)
+        reference_trajectory[:, :3] += initial_position
+        return reference_trajectory
+
     @property
     def action_spec(self):
         """
@@ -913,10 +891,15 @@ class OSXGrind(ManipulationEnv):
 
     @property
     def eef_wrench(self):
-        # return self.robots[0].composite_controller.part_controllers['right'].current_wrench
-        # return self.robots[0].composite_controller.part_controllers['right'].eef_wrench
-        return self.robots[0].recent_ee_forcetorques['right'].average
-        # return np.concatenate([self.robots[0].ee_force['right'], self.robots[0].ee_torque['right']])
+        return self.robots[0].composite_controller.part_controllers['right'].eef_wrench
+
+    @property
+    def eef_pos(self):
+        return np.array(self.sim.data.site_xpos[self.robots[0].eef_site_id['right']])
+
+    @property
+    def eef_quat(self):
+        return T.mat2quat(self.sim.data.site_xmat[self.robots[0].eef_site_id['right']].reshape(3, 3))
 
     def __log_details__(self, action, residual_action):
         if self.log_details:
@@ -926,7 +909,7 @@ class OSXGrind(ManipulationEnv):
             self.log_dict['details']['action_in'].append(action)
             self.log_dict['details']['res_action'].append(residual_action)
             self.log_dict['details']['current_ref'].append(self.reference_trajectory[self.current_waypoint_index])
-            self.log_dict['details']['current_pos'].append(self.robots[0]._hand_pos['right'])
+            self.log_dict['details']['current_pos'].append(self.eef_pos)
 
             # just for plotting, make quat affine
             curr_quat = self.robots[0]._hand_quat['right']
@@ -971,11 +954,3 @@ class OSXGrind(ManipulationEnv):
             f_rew=self.log_dict['rewards']['force_error'],
             p_rew=self.log_dict['rewards']['traj_error']
         )
-
-    @property
-    def eef_pos(self):
-        return np.array(self.sim.data.site_xpos[self.robots[0].eef_site_id['right']])
-
-    @property
-    def eef_quat(self):
-        return T.mat2quat(self.sim.data.site_xmat[self.robots[0].eef_site_id['right']].reshape(3, 3))
