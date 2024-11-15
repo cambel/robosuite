@@ -9,7 +9,7 @@ hidapi
 h5py
 
 # for mujoco ik
-mink
+# mink
 
 # for extra robosuite_models
 robosuite-models==1.0.0
