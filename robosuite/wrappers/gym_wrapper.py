@@ -162,8 +162,6 @@ class GymWrapper(Wrapper, gym.Env):
         obs = self._flatten_obs(ob_dict) if self.flatten_obs else self._filter_obs(ob_dict)
         return obs, reward, terminated, False, info
 
-        return self._flatten_obs(ob_dict), reward, terminated, info
-
     def compute_reward(self, achieved_goal, desired_goal, info):
         """
         Dummy function to be compatible with gym interface that simply returns environment reward

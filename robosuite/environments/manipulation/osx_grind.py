@@ -282,7 +282,7 @@ class OSXGrind(ManipulationEnv):
 
         if reference_force is None:
             desired_contact_force = np.random.uniform(low=3, high=20)
-            self.reference_force = [0, 0, desired_contact_force, 0, 0, 0] * self.trajectory_len
+            self.reference_force = np.array([[0, 0, desired_contact_force, 0, 0, 0]] * self.trajectory_len)
         else:
             self.reference_force = reference_force
 
@@ -358,18 +358,13 @@ class OSXGrind(ManipulationEnv):
         assert len(action) == len(self.action_indices), \
             f"Size of action {len(action)} does not match expected {len(self.action_indices)}"
 
-        action_kp = np.interp(action, [-1, 1], [0.0001, 0.5])  # limits for kp (action from sac)
+        action_kp = np.interp(action, [-1, 1], [0.001, 1.0])  # limits for kp (action from sac)
         # change controller params
-        # self.robots[0].composite_controller.part_controllers['right'].kp[self.action_indices] = action_kp[self.action_indices]
+        self.robots[0].composite_controller.part_controllers['right'].kp[self.action_indices] = action_kp[self.action_indices]
 
         pos_rot_action = np.zeros(6)
 
-        if self.reference_force is not None:
-            self.ft_action = self.reference_force[self.current_waypoint_index]
-
-        else:
-            # if no force reference given, compute it at each step wrt world frame orientation
-            self.ft_action = np.zeros(6)
+        self.ft_action = self.reference_force[self.current_waypoint_index]
 
         # send action with both pose and wrench to the env
         # send the ft action already in base frame
@@ -380,7 +375,6 @@ class OSXGrind(ManipulationEnv):
         factor = 1 - np.tanh(50 * self.tracking_error)
         scale_factor = np.interp(factor, [0.0, 1.0], [1, 10])  # TODO get some good values for per step and per thresh
         ctr_action[:6] += residual_action * scale_factor
-        # print(f"{ctr_action[:6]=}")
 
         self.__log_details__(action, residual_action)
         return super().step(ctr_action)
@@ -417,13 +411,14 @@ class OSXGrind(ManipulationEnv):
                 force_reward = self.reward_weights['tracking_force_error'] * distance_from_ref_force
 
                 # Reward for following desired linear trajectory
-                tracking_trajectory_error = -max(self.tracking_error - self.tracking_trajectory_threshold, 0.0) / self.tracking_trajectory_threshold
+                tracking_trajectory_error = -self.tracking_error
                 # print(self.tracking_error, tracking_trajectory_error)
                 traj_reward = self.reward_weights['tracking_trajectory_error'] * tracking_trajectory_error
 
+                step_penalty = -1
                 # TODO: reward for finishing faster?
 
-                reward += force_reward + traj_reward
+                reward += force_reward + traj_reward + step_penalty
 
                 if self.log_rewards:
                     self.log_dict['rewards']['traj_error'].append(traj_reward)
@@ -454,7 +449,7 @@ class OSXGrind(ManipulationEnv):
 
         # track error of the actions controlled by the policy
         tracking_pos = T.rotate_vector_by_quaternion(relative_distance[:3], ref_quat)
-        self.tracking_error = np.linalg.norm(np.concatenate([tracking_pos*np.array([1, 1, 1.]), relative_distance[3:]]))
+        self.tracking_error = np.linalg.norm(np.concatenate([tracking_pos*np.array([1, 1, 0.]), relative_distance[3:]]))
         # print(f"{tracking_pos=}", f"{self.tracking_error}")
         return relative_distance
 
@@ -463,6 +458,8 @@ class OSXGrind(ManipulationEnv):
 
         # in base frame
         relative_wrench = self.ft_action - self.eef_wrench
+        # only consider the error for the force controlled directions
+        relative_wrench *= (np.ones(6) - self.robots[0].composite_controller.part_controllers['right'].selection_matrix)
 
         self.tracking_force_error = np.linalg.norm(relative_wrench / self.force_follow_normalization)
         return relative_wrench
@@ -563,8 +560,9 @@ class OSXGrind(ManipulationEnv):
         super()._setup_references()
 
         # Additional object references from this env
-        self.mortar_body_id = self.sim.model.body_name2id(self.mortar.root_body)
         self.force_cylinder_body_id = self.sim.model.body_name2id(self.force_cylinder.root_body)
+        if self.spawn_mortar:
+            self.mortar_body_id = self.sim.model.body_name2id(self.mortar.root_body)
 
     def _setup_observables(self):
         """
@@ -937,7 +935,7 @@ class OSXGrind(ManipulationEnv):
 
     def _save_details(self):
         np.savez(
-            self.log_filename,
+            self.log_dir + "/step_actions.npz",
             timesteps=self.log_dict['details']['timesteps'],
             waypoint=self.log_dict['details']['waypoint'],
             action_in=self.log_dict['details']['action_in'],
