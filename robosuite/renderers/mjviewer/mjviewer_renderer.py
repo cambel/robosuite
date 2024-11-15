@@ -10,13 +10,14 @@ DEFAULT_FREE_CAM = {
 
 
 class MjviewerRenderer:
-    def __init__(self, env, camera_id=None, cam_config=None):
+    def __init__(self, env, camera_id=None, cam_config=None, interactive_mode=False):
         if cam_config is None:
             cam_config = DEFAULT_FREE_CAM
         self.env = env
         self.camera_id = camera_id
         self.viewer = None
         self.camera_config = cam_config
+        self.interactive_mode = interactive_mode
 
     def render(self):
         pass
@@ -50,7 +51,8 @@ class MjviewerRenderer:
                 else:
                     self.viewer.cam.type = 0
 
-            # self.viewer.cam.type = 0
+            if self.interactive_mode:
+                self.viewer.cam.type = 0
 
         self.viewer.sync()
 
